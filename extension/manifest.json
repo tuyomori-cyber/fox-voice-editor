@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "fox-voice-editor",
+  "version": "0.1.0",
+  "description": "音声ブロックをタッチで組み立てるFirefox拡張",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fox-voice-editor@foxbook.example",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "storage",
+    "clipboardWrite"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "fox-voice-editor を開く"
+  }
+}
