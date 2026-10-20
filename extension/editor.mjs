@@ -165,6 +165,7 @@ function renderHistory() {
     historyItemsNode.append(empty);
   }
   historyMenu.hidden = !openHistoryMenuId || selected.length === 0;
+  $("clear-history-selection").hidden = selected.length <= 1;
   if (!historyMenu.hidden) {
     const count = selected.length;
     $("history-pin").textContent = selected.every((item) => item.pinned)
@@ -260,11 +261,18 @@ function clearBlockSelection() {
   }
 }
 
+function resetHistorySelection() {
+  selectedHistoryIds.clear();
+  openHistoryMenuId = null;
+  historyMenu.hidden = true;
+}
+
 function syncBlockMenuActions() {
   const canInsert = selectedHistoryIds.size === 1 && selectedBlockIds.size === 1;
   $("insert-before").hidden = !canInsert;
   $("insert-after").hidden = !canInsert;
   $("delete-block").textContent = selectedBlockIds.size > 1 ? `削除（${selectedBlockIds.size}件）` : "削除";
+  $("clear-block-selection").hidden = selectedBlockIds.size <= 1;
   if (!blockMenu.hidden) positionBlockMenu();
 }
 
@@ -610,21 +618,29 @@ $("history-pin").addEventListener("click", () => {
   const ids = new Set(selectedHistoryIds);
   const selected = editorState.history.filter((entry) => ids.has(entry.id));
   const pinned = !selected.every((entry) => entry.pinned);
-  openHistoryMenuId = null;
+  resetHistorySelection();
   mutate((state) => setPinnedMany(state, ids, pinned));
 });
 $("history-delete").addEventListener("click", () => {
   if (!openHistoryMenuId || !editable() || selectedHistoryIds.size === 0) return;
   const ids = new Set(selectedHistoryIds);
-  openHistoryMenuId = null;
-  selectedHistoryIds.clear();
+  resetHistorySelection();
   mutate((state) => deleteHistoryMany(state, ids));
+});
+$("clear-history-selection").addEventListener("click", () => {
+  if (!editable()) return;
+  resetHistorySelection();
+  renderHistory();
 });
 $("delete-block").addEventListener("click", () => {
   if (!editable() || selectedBlockIds.size === 0) return;
   const ids = new Set(selectedBlockIds);
   clearBlockSelection();
   mutate((state) => deleteBlocks(state, ids));
+});
+$("clear-block-selection").addEventListener("click", () => {
+  if (!editable()) return;
+  clearBlockSelection();
 });
 $("load-more").addEventListener("click", () => {
   historyVisibleCount += 30;
@@ -642,8 +658,7 @@ $("clear-document").addEventListener("click", () => {
 });
 $("clear-history").addEventListener("click", () => {
   if (confirm("ピン留めを含む履歴をすべて消去しますか？")) {
-    selectedHistoryIds.clear();
-    openHistoryMenuId = null;
+    resetHistorySelection();
     mutate(clearHistory);
   }
 });
