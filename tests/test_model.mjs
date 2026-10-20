@@ -11,18 +11,15 @@ function voice(state, text, index, id) {
   return applyVoiceResult(state, text, { kind: "insert", index }, id, `history-${id}`, time);
 }
 
-test("voice blocks insert, move, replace and join without separators", () => {
+test("voice blocks insert, move and join without separators", () => {
   let state = voice(initialState(), "Firefox", 0, "b1");
   state = voice(state, "を", 1, "b2");
   state = voice(state, "変更する", 2, "b3");
   assert.equal(joinedText(state), "Firefoxを変更する");
   state = moveBlock(state, "b2", -1);
   assert.equal(joinedText(state), "をFirefox変更する");
-  state = applyVoiceResult(state, "の", { kind: "replace", blockId: "b2" }, "unused", "new-history", time);
-  assert.equal(state.document.blocks[0].id, "b2");
-  assert.equal(joinedText(state), "のFirefox変更する");
   const before = state;
-  assert.throws(() => applyVoiceResult(state, "失敗", { kind: "replace", blockId: "missing" }, "x", "h", time));
+  assert.throws(() => applyVoiceResult(state, "失敗", { kind: "replace", blockId: "b2" }, "x", "h", time));
   assert.equal(state, before);
 });
 

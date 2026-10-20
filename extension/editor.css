@@ -6,12 +6,16 @@ header h1 { font-size: 1.35rem; margin: 0 0 1rem; }
 .workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 1fr); gap: 1rem; align-items: start; }
 .workspace-panel { min-width: 0; min-height: 70vh; border: 1px solid #8888; border-radius: .8rem; padding: 1rem; }
 .section-heading, .editor-toolbar, .controls { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.engine-controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; width: 100%; }
+.engine-controls select { min-height: 2.75rem; padding: .35rem; font-size: 1rem; }
 .controls { justify-content: flex-start; }
 button { min-height: 2.75rem; padding: .45rem .8rem; font-size: 1rem; cursor: pointer; }
 button:disabled { cursor: default; }
 .controls button { min-width: 8.5rem; min-height: 3.25rem; }
 #status { font-weight: bold; margin: .7rem 0 .2rem; }
-#timer { margin: .2rem 0; font-size: .85rem; }
+#microphone-status { margin: .2rem 0; font-size: .85rem; }
+#engine-status { margin: .2rem 0; font-size: .85rem; }
+#timer { margin: .2rem 0; font-size: .85rem; white-space: pre-line; }
 #error { color: #d95959; min-height: 1.2rem; margin: .2rem 0 .8rem; }
 #blocks { display: flex; flex-wrap: wrap; align-content: flex-start; gap: .65rem; min-height: 9rem; padding: .75rem; border: 1px dashed #8888; border-radius: .6rem; }
 .block { display: flex; align-items: center; max-width: 100%; min-height: 3.4rem; padding: .7rem 1rem; border: 1px solid #888; border-radius: .7rem; background: #8882; font-size: 1.12rem; white-space: pre-wrap; overflow-wrap: anywhere; cursor: grab; user-select: none; touch-action: none; }

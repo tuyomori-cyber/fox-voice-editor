@@ -5,8 +5,11 @@ import {
 
 const HOST_NAME = "fox_voice_editor";
 const STORAGE_KEY = "editorState";
+const ENGINE_STORAGE_KEY = "recognitionEngine";
 const $ = (id) => document.getElementById(id);
 const statusNode = $("status");
+const microphoneStatusNode = $("microphone-status");
+const engineStatusNode = $("engine-status");
 const errorNode = $("error");
 const timerNode = $("timer");
 const blocksNode = $("blocks");
@@ -18,6 +21,14 @@ const saveStatusNode = $("save-status");
 
 let port = null;
 let hostState = "connecting";
+let microphoneReady = false;
+let selectedEngine = "whisper";
+let engineStatus = "uninitialized";
+let engineGeneration = null;
+let engineStartedAt = null;
+let engineInitializationMs = null;
+let activeEngine = null;
+let activeGeneration = null;
 let editorState = null;
 let saveQueue = Promise.resolve();
 let recordingId = null;
@@ -31,7 +42,7 @@ let selectedBlockId = null;
 let openHistoryMenuId = null;
 let dragState = null;
 
-const busyStates = new Set(["starting", "recording", "stopping", "converting", "recognizing", "cancelling", "syncing"]);
+const busyStates = new Set(["preparing", "starting", "recording", "stopping", "converting", "recognizing", "cancelling", "syncing"]);
 const editable = () => editorState !== null && !busyStates.has(hostState);
 const newId = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -83,6 +94,7 @@ function phraseRow(item) {
   row.className = "phrase-row";
   const label = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
     selectedHistoryId = selectedHistoryId === item.id ? null : item.id;
+    closeBlockMenu();
     renderHistory();
   }, !editable());
   label.className = "history-text";
@@ -123,7 +135,8 @@ function renderHistory() {
   const selected = editorState.history.find((h) => h.id === selectedHistoryId);
   selectedHistoryNode.textContent = selected
     ? `選択中: ${selected.text}（再タップで解除）`
-    : "語句を選択して前後に挿入。未選択ならその位置へ録音。";
+    : "語句を選択するとブロックの前後へ挿入できます。";
+  syncBlockMenuActions();
   for (const item of [...pinned, ...normal.slice(0, historyVisibleCount)]) {
     historyItemsNode.append(phraseRow(item));
   }
@@ -145,7 +158,24 @@ function render() {
   $("copy").disabled = !editable() || !preview;
   $("clear-document").disabled = !editable() || editorState.document.blocks.length === 0;
   for (const action of blockMenu.querySelectorAll("button")) action.disabled = !editable();
-  $("rerecord").disabled = hostState !== "idle";
+}
+
+function renderEngine() {
+  const select = $("recognition-engine");
+  select.value = selectedEngine;
+  select.disabled = !port || hostState !== "idle";
+  $("retry-engine").hidden = engineStatus !== "error";
+  $("retry-engine").disabled = !port || hostState !== "idle";
+  const name = selectedEngine === "whisper" ? "Whisper（ggml-base.bin）" : "ReazonSpeech K2（INT8）";
+  if (engineStatus === "preparing") {
+    const elapsed = engineStartedAt === null ? 0 : Math.floor((performance.now() - engineStartedAt) / 1000);
+    engineStatusNode.textContent = `${name}：モデル準備中（${elapsed}秒）`;
+  } else {
+    const label = {ready: "準備完了", error: "準備失敗", uninitialized: "未準備"}[engineStatus] || engineStatus;
+    const elapsed = engineStatus === "ready" && selectedEngine === "reazonspeech_k2" && typeof engineInitializationMs === "number"
+      ? `（${(engineInitializationMs / 1000).toFixed(2)}秒）` : "";
+    engineStatusNode.textContent = `${name}：${label}${elapsed}`;
+  }
 }
 
 function persist(snapshot) {
@@ -192,6 +222,13 @@ function closeBlockMenu() {
   for (const card of blocksNode.children) card.classList.remove("is-selected");
 }
 
+function syncBlockMenuActions() {
+  const hasSelectedHistory = selectedHistoryId !== null;
+  $("insert-before").hidden = !hasSelectedHistory;
+  $("insert-after").hidden = !hasSelectedHistory;
+  if (!blockMenu.hidden) positionBlockMenu();
+}
+
 function openBlockMenu(blockId) {
   if (!editable()) return;
   if (selectedBlockId === blockId && !blockMenu.hidden) {
@@ -200,21 +237,19 @@ function openBlockMenu(blockId) {
   }
   selectedBlockId = blockId;
   for (const card of blocksNode.children) card.classList.toggle("is-selected", card.dataset.blockId === blockId);
+  syncBlockMenuActions();
   blockMenu.hidden = false;
   positionBlockMenu();
 }
 
 function insertRelative(after) {
-  if (!editable() || !selectedBlockId) return;
+  if (!editable() || !selectedBlockId || !selectedHistoryId) return;
   const index = editorState.document.blocks.findIndex((block) => block.id === selectedBlockId);
   if (index < 0) return;
   const insertionIndex = index + Number(after);
+  const historyId = selectedHistoryId;
   closeBlockMenu();
-  if (selectedHistoryId) {
-    mutate((state) => insertFromHistory(state, selectedHistoryId, insertionIndex, newId(), now()));
-  } else {
-    beginRecording({ kind: "insert", index: insertionIndex });
-  }
+  mutate((state) => insertFromHistory(state, historyId, insertionIndex, newId(), now()));
 }
 
 function onBlockPointerDown(event, blockId) {
@@ -269,23 +304,25 @@ function onBlockPointerCancel(event) { endBlockPointer(event, true); }
 function setHostState(nextState) {
   hostState = nextState;
   const labels = {
-    connecting: "接続中…", idle: "待機", starting: "録音を開始中…", recording: "録音中",
+    connecting: "接続中…", preparing: "マイクを確認中…", idle: "待機", starting: "録音を開始中…", recording: "録音中",
     stopping: "停止中…", converting: "音声変換中…", recognizing: "文字起こし中…",
     cancelling: "キャンセル中…", syncing: "状態を確認中…", disconnected: "接続が切れました"
   };
   statusNode.textContent = labels[nextState] || nextState;
   const toggle = $("record-toggle");
   toggle.textContent = nextState === "recording" || nextState === "stopping" ? "録音停止" : "録音開始";
-  toggle.disabled = editorState === null || !["idle", "recording"].includes(nextState);
+  toggle.disabled = editorState === null || (nextState === "idle" && (!microphoneReady || engineStatus !== "ready")) || !["idle", "recording"].includes(nextState);
   $("cancel").disabled = !["recording", "stopping", "converting", "recognizing"].includes(nextState);
+  $("check-microphone").disabled = nextState !== "idle" || !port;
+  renderEngine();
   render();
 }
 
-function post(action, clearError = true) {
+function post(action, clearError = true, extra = {}) {
   if (clearError) showError("");
   try {
     if (!port) throw new Error("Native Hostに接続されていません。");
-    port.postMessage({ action });
+    port.postMessage({ action, ...extra });
     return true;
   } catch (error) {
     showError(`Native Hostへの送信に失敗しました: ${error.message}`);
@@ -295,9 +332,17 @@ function post(action, clearError = true) {
   }
 }
 
-function beginRecording(target) {
+function beginRecording() {
   if (hostState !== "idle" || editorState === null) return;
-  pendingTarget = target;
+  if (!microphoneReady) {
+    showError("録音の前にマイクを再確認してください。");
+    return;
+  }
+  if (engineStatus !== "ready") {
+    showError("録音の前に認識エンジンの準備を完了してください。");
+    return;
+  }
+  pendingTarget = { kind: "insert", index: editorState.document.blocks.length };
   closeBlockMenu();
   setHostState("starting");
   post("start_recording");
@@ -309,6 +354,8 @@ function resetRecording() {
   activeTarget = null;
   stopAt = null;
   cancelRequested = false;
+  activeEngine = null;
+  activeGeneration = null;
 }
 
 function finishRecording() {
@@ -317,6 +364,38 @@ function finishRecording() {
 }
 
 function handleMessage(message) {
+  if (message.event === "engine_prepared") {
+    if (message.engine !== selectedEngine) return;
+    engineStatus = message.engineStatus;
+    engineGeneration = message.engineGeneration;
+    if (engineStatus === "preparing") engineStartedAt = performance.now();
+    if (engineStatus === "ready") {
+      engineStartedAt = null;
+      if (typeof message.initializationMs === "number") engineInitializationMs = message.initializationMs;
+    }
+    if (engineStatus === "error") showError(`${message.message || "モデル準備に失敗しました。"} (${message.code || "ENGINE_FAILED"})`);
+    setHostState(hostState);
+    return;
+  }
+  if (message.event === "microphone_prepared") {
+    if (hostState !== "preparing") return;
+    microphoneReady = ["skipped", "unchanged", "adjusted"].includes(message.status);
+    if (microphoneReady) {
+      const checkedAt = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+      const description = {
+        skipped: "補正無効", unchanged: "ブースト値0・変更なし", adjusted: "ブースト値を0へ補正"
+      }[message.status];
+      microphoneStatusNode.textContent = message.status === "skipped"
+        ? "マイク補正は無効（録音可能）"
+        : `マイク最終確認 ${checkedAt}：${description}。録音時は自動再確認しません。`;
+      showError("");
+    } else {
+      microphoneStatusNode.textContent = "マイク未確認。再確認してください。";
+      showError(`${message.message || "マイクの確認に失敗しました。"} (${message.code || "MICROPHONE_PREPARATION_FAILED"})`);
+    }
+    setHostState("idle");
+    return;
+  }
   if (message.event === "error") {
     showError(`${message.message} (${message.code})`);
     if (hostState === "syncing") {
@@ -329,6 +408,14 @@ function handleMessage(message) {
     return;
   }
   if (message.event === "status") {
+    if (message.engine === selectedEngine) {
+      engineStatus = message.engineStatus;
+      engineGeneration = message.engineGeneration;
+    } else {
+      engineStatus = "uninitialized";
+      showError("選択エンジンとHostの状態が一致しません。モデルを再準備してください。");
+    }
+    microphoneReady = Boolean(message.microphoneReady);
     if (message.state === "idle") {
       finishRecording();
       return;
@@ -343,11 +430,19 @@ function handleMessage(message) {
     setHostState(cancelRequested ? "cancelling" : message.state);
   } else if (message.event === "started") {
     recordingId = message.recordingId;
+    activeEngine = message.engine;
+    activeGeneration = message.engineGeneration;
     activeTarget = pendingTarget;
     pendingTarget = null;
     stopAt = null;
     timerNode.textContent = "";
     setHostState("recording");
+    if (activeEngine !== selectedEngine || activeGeneration !== engineGeneration) {
+      activeTarget = null;
+      cancelRequested = true;
+      setHostState("cancelling");
+      post("cancel_recording", false);
+    }
   } else if (message.event === "stopping" && message.recordingId === recordingId) {
     if (!cancelRequested) setHostState("stopping");
   } else if (message.event === "processing" && message.recordingId === recordingId) {
@@ -355,7 +450,8 @@ function handleMessage(message) {
   } else if (message.event === "result" && message.recordingId === recordingId) {
     if (cancelRequested) {
       timerNode.textContent = "録音をキャンセルしました。";
-    } else if (activeTarget) {
+    } else if (activeTarget && message.engine === activeEngine && message.engineGeneration === activeGeneration &&
+               message.engine === selectedEngine && message.engineGeneration === engineGeneration) {
       try {
         commit(applyVoiceResult(editorState, message.text, activeTarget, newId(), newId(), now()));
       } catch (error) {
@@ -365,12 +461,21 @@ function handleMessage(message) {
       showError("録音先を確認できないため、認識結果は文書へ追加されませんでした。");
     }
     const browserDuration = stopAt === null ? null : Math.round(performance.now() - stopAt);
-    const hostDuration = `Host処理（モデル読み込みを含む）: ${(message.elapsedMs / 1000).toFixed(2)}秒`;
-    const loadDuration = typeof message.modelLoadMs === "number" ? ` / モデル読み込み: ${message.modelLoadMs.toFixed(0)}ms` : "";
+    const duration = (value) => typeof value === "number" ? `${(value / 1000).toFixed(2)}秒` : "計測不可";
     if (!cancelRequested) {
-      timerNode.textContent = browserDuration === null
-        ? `${hostDuration}${loadDuration}`
-        : `停止ボタンから結果表示まで: ${(browserDuration / 1000).toFixed(2)}秒 / ${hostDuration}${loadDuration}`;
+      const lines = message.engine === "reazonspeech_k2"
+        ? [
+            `A 録音停止〜音声変換完了: ${duration(message.conversionMs)}`,
+            "B モデル読み込み: セッション開始時に実施（録音ごとにはなし）",
+            `C 推論: ${duration(message.recognitionMs)}`
+          ]
+        : [
+            `A 録音停止〜音声変換完了: ${duration(message.conversionMs)}`,
+            `B whisper-cli起動〜モデル読み込み完了: ${duration(message.modelStartupMs)}`,
+            `C モデル読み込み完了〜認識終了: ${duration(message.recognitionMs)}`
+          ];
+      timerNode.textContent = [...lines, `停止ボタン〜結果表示: ${duration(browserDuration)}`,
+        `使用モデル: ${message.modelName || "不明"}`].join("\n");
     }
     finishRecording();
   } else if (message.event === "cancelled" && message.recordingId === recordingId) {
@@ -379,6 +484,10 @@ function handleMessage(message) {
 }
 
 function connect() {
+  microphoneReady = false;
+  engineStatus = "uninitialized";
+  engineGeneration = null;
+  engineInitializationMs = null;
   setHostState("connecting");
   try {
     port = browser.runtime.connectNative(HOST_NAME);
@@ -386,24 +495,65 @@ function connect() {
     port.onDisconnect.addListener(() => {
       showError(browser.runtime.lastError?.message || "Native Hostとの接続が切れました。");
       port = null;
+      microphoneReady = false;
+      engineStatus = "uninitialized";
+      engineGeneration = null;
+      engineInitializationMs = null;
+      microphoneStatusNode.textContent = "マイク未確認";
       resetRecording();
       setHostState("disconnected");
     });
-    post("get_status");
+    setHostState("preparing");
+    post("prepare_microphone");
+    post("prepare_engine", false, {engine: selectedEngine});
   } catch (error) {
     showError(error.message);
     setHostState("disconnected");
   }
 }
 
+function prepareSelectedEngine() {
+  engineStatus = "uninitialized";
+  engineGeneration = null;
+  engineStartedAt = null;
+  engineInitializationMs = null;
+  renderEngine();
+  post("prepare_engine", true, {engine: selectedEngine});
+  setHostState(hostState);
+}
+
+$("recognition-engine").addEventListener("change", async (event) => {
+  if (hostState !== "idle") return;
+  selectedEngine = event.target.value;
+  prepareSelectedEngine();
+  try {
+    await browser.storage.local.set({[ENGINE_STORAGE_KEY]: selectedEngine});
+  } catch (error) {
+    showError(`エンジン設定を保存できません: ${error.message}`);
+  }
+});
+$("retry-engine").addEventListener("click", () => {
+  if (hostState === "idle") prepareSelectedEngine();
+});
+setInterval(() => {
+  if (engineStatus === "preparing") renderEngine();
+}, 1000);
+
 $("record-toggle").addEventListener("click", () => {
   if (hostState === "idle") {
-    beginRecording({ kind: "insert", index: editorState.document.blocks.length });
+    beginRecording();
   } else if (hostState === "recording") {
     stopAt = performance.now();
     setHostState("stopping");
     post("stop_recording");
   }
+});
+$("check-microphone").addEventListener("click", () => {
+  if (hostState !== "idle") return;
+  microphoneReady = false;
+  microphoneStatusNode.textContent = "マイクを確認中…";
+  setHostState("preparing");
+  post("prepare_microphone");
 });
 $("cancel").addEventListener("click", () => {
   if (!["recording", "stopping", "converting", "recognizing"].includes(hostState)) return;
@@ -413,10 +563,6 @@ $("cancel").addEventListener("click", () => {
 });
 $("insert-before").addEventListener("click", () => insertRelative(false));
 $("insert-after").addEventListener("click", () => insertRelative(true));
-$("rerecord").addEventListener("click", () => {
-  if (!selectedBlockId) return;
-  beginRecording({ kind: "replace", blockId: selectedBlockId });
-});
 $("delete-block").addEventListener("click", () => {
   if (!selectedBlockId) return;
   const id = selectedBlockId;
@@ -452,7 +598,8 @@ window.addEventListener("pagehide", () => port?.disconnect());
 
 async function initialize() {
   try {
-    const saved = await browser.storage.local.get(STORAGE_KEY);
+    const saved = await browser.storage.local.get([STORAGE_KEY, ENGINE_STORAGE_KEY]);
+    selectedEngine = ["whisper", "reazonspeech_k2"].includes(saved[ENGINE_STORAGE_KEY]) ? saved[ENGINE_STORAGE_KEY] : "whisper";
     editorState = restoreState(saved[STORAGE_KEY]);
     if (saved[STORAGE_KEY] === undefined) persist(editorState);
     render();

@@ -64,18 +64,8 @@ function insertBlock(state, index, block) {
 export function applyVoiceResult(state, text, target, blockId, historyId, now) {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("空の認識結果は追加できません。");
-  let next;
-  if (target.kind === "replace") {
-    const index = state.document.blocks.findIndex((b) => b.id === target.blockId);
-    if (index < 0) throw new Error("置換対象のブロックが見つかりません。");
-    const blocks = [...state.document.blocks];
-    blocks[index] = { ...blocks[index], text: trimmed, origin: "voice" };
-    next = withBlocks(state, blocks);
-  } else if (target.kind === "insert") {
-    next = insertBlock(state, target.index, { id: blockId, text: trimmed, origin: "voice" });
-  } else {
-    throw new Error("録音対象が不正です。");
-  }
+  if (target?.kind !== "insert") throw new Error("録音対象が不正です。");
+  const next = insertBlock(state, target.index, { id: blockId, text: trimmed, origin: "voice" });
   return touchHistory(next, trimmed, now, historyId);
 }
 
