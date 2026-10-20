@@ -103,11 +103,21 @@ export function reorderBlocks(state, orderedIds) {
 }
 
 export function setPinned(state, historyId, pinned) {
-  return { ...state, history: state.history.map((h) => h.id === historyId ? { ...h, pinned } : h) };
+  return setPinnedMany(state, [historyId], pinned);
 }
 
 export function deleteHistory(state, historyId) {
-  return { ...state, history: state.history.filter((h) => h.id !== historyId) };
+  return deleteHistoryMany(state, [historyId]);
+}
+
+export function setPinnedMany(state, historyIds, pinned) {
+  const ids = new Set(historyIds);
+  return { ...state, history: state.history.map((h) => ids.has(h.id) ? { ...h, pinned } : h) };
+}
+
+export function deleteHistoryMany(state, historyIds) {
+  const ids = new Set(historyIds);
+  return { ...state, history: state.history.filter((h) => !ids.has(h.id)) };
 }
 
 export function clearDocument(state) {

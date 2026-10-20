@@ -1,6 +1,6 @@
 import {
   initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock, moveBlock, reorderBlocks,
-  setPinned, deleteHistory, clearDocument, clearHistory, joinedText
+  setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
 const HOST_NAME = "fox_voice_editor";
@@ -38,7 +38,7 @@ let activeTarget = null;
 let stopAt = null;
 let cancelRequested = false;
 let historyVisibleCount = 30;
-let selectedHistoryId = null;
+const selectedHistoryIds = new Set();
 let selectedBlockId = null;
 let openHistoryMenuId = null;
 let dragState = null;
@@ -92,11 +92,11 @@ function renderBlocks() {
 
 function phraseBlock(item) {
   const block = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
-    if (selectedHistoryId === item.id && openHistoryMenuId === item.id) {
-      selectedHistoryId = null;
-      openHistoryMenuId = null;
+    if (selectedHistoryIds.has(item.id)) {
+      selectedHistoryIds.delete(item.id);
+      openHistoryMenuId = [...selectedHistoryIds].at(-1) ?? null;
     } else {
-      selectedHistoryId = item.id;
+      selectedHistoryIds.add(item.id);
       openHistoryMenuId = item.id;
     }
     closeBlockMenu();
@@ -104,9 +104,9 @@ function phraseBlock(item) {
   }, !editable());
   block.className = "history-block";
   block.dataset.historyId = item.id;
-  block.setAttribute("aria-pressed", String(selectedHistoryId === item.id));
+  block.setAttribute("aria-pressed", String(selectedHistoryIds.has(item.id)));
   block.setAttribute("aria-expanded", String(openHistoryMenuId === item.id));
-  if (selectedHistoryId === item.id) block.classList.add("is-selected");
+  if (selectedHistoryIds.has(item.id)) block.classList.add("is-selected");
   return block;
 }
 
@@ -127,14 +127,23 @@ function renderHistory() {
   historyItemsNode.replaceChildren();
   const pinned = editorState.history.filter((h) => h.pinned);
   const normal = editorState.history.filter((h) => !h.pinned);
-  if (selectedHistoryId && !editorState.history.some((h) => h.id === selectedHistoryId)) selectedHistoryId = null;
-  if (openHistoryMenuId && openHistoryMenuId !== selectedHistoryId) openHistoryMenuId = null;
-  const selected = editorState.history.find((h) => h.id === selectedHistoryId);
-  selectedHistoryNode.textContent = selected
-    ? `選択中: ${selected.text}（再タップで解除）`
-    : "語句を選択するとブロックの前後へ挿入できます。";
+  const existingIds = new Set(editorState.history.map((h) => h.id));
+  for (const id of selectedHistoryIds) {
+    if (!existingIds.has(id)) selectedHistoryIds.delete(id);
+  }
+  const selected = editorState.history.filter((h) => selectedHistoryIds.has(h.id));
+  selectedHistoryNode.textContent = selected.length === 0
+    ? "語句をタップして選択。複数選択するとまとめてピン留め・削除できます。"
+    : selected.length === 1
+      ? `選択中: ${selected[0].text}（再タップで解除）`
+      : `選択中: ${selected.length}件（ピン留め・削除をまとめて実行。前後挿入は1件選択時のみ）`;
   syncBlockMenuActions();
-  for (const [items, kind] of [[pinned, "pinned"], [normal.slice(0, historyVisibleCount), "normal"]]) {
+  const visibleNormal = normal.slice(0, historyVisibleCount);
+  const visibleIds = new Set([...pinned, ...visibleNormal].map((h) => h.id));
+  if (openHistoryMenuId && !visibleIds.has(openHistoryMenuId)) {
+    openHistoryMenuId = [...selectedHistoryIds].reverse().find((id) => visibleIds.has(id)) ?? null;
+  }
+  for (const [items, kind] of [[pinned, "pinned"], [visibleNormal, "normal"]]) {
     if (items.length === 0) continue;
     const group = document.createElement("div");
     group.className = `history-group ${kind}`;
@@ -146,12 +155,12 @@ function renderHistory() {
     empty.textContent = "履歴はありません。";
     historyItemsNode.append(empty);
   }
-  const menuItem = editorState.history.find((h) => h.id === openHistoryMenuId);
-  const menuBlockVisible = [...historyItemsNode.querySelectorAll(".history-block")]
-    .some((node) => node.dataset.historyId === openHistoryMenuId);
-  historyMenu.hidden = !menuItem || !menuBlockVisible;
+  historyMenu.hidden = !openHistoryMenuId || selected.length === 0;
   if (!historyMenu.hidden) {
-    $("history-pin").textContent = menuItem.pinned ? "ピンを外す" : "ピン留め";
+    const count = selected.length;
+    $("history-pin").textContent = selected.every((item) => item.pinned)
+      ? `ピンを外す（${count}件）` : `ピン留め（${count}件）`;
+    $("history-delete").textContent = `履歴から削除（${count}件）`;
     positionHistoryMenu();
   }
   for (const action of historyMenu.querySelectorAll("button")) action.disabled = !editable();
@@ -233,7 +242,7 @@ function closeBlockMenu() {
 }
 
 function syncBlockMenuActions() {
-  const hasSelectedHistory = selectedHistoryId !== null;
+  const hasSelectedHistory = selectedHistoryIds.size === 1;
   $("insert-before").hidden = !hasSelectedHistory;
   $("insert-after").hidden = !hasSelectedHistory;
   if (!blockMenu.hidden) positionBlockMenu();
@@ -255,11 +264,11 @@ function openBlockMenu(blockId) {
 }
 
 function insertRelative(after) {
-  if (!editable() || !selectedBlockId || !selectedHistoryId) return;
+  if (!editable() || !selectedBlockId || selectedHistoryIds.size !== 1) return;
   const index = editorState.document.blocks.findIndex((block) => block.id === selectedBlockId);
   if (index < 0) return;
   const insertionIndex = index + Number(after);
-  const historyId = selectedHistoryId;
+  const historyId = selectedHistoryIds.values().next().value;
   closeBlockMenu();
   mutate((state) => insertFromHistory(state, historyId, insertionIndex, newId(), now()));
 }
@@ -576,17 +585,19 @@ $("cancel").addEventListener("click", () => {
 $("insert-before").addEventListener("click", () => insertRelative(false));
 $("insert-after").addEventListener("click", () => insertRelative(true));
 $("history-pin").addEventListener("click", () => {
-  const item = editorState?.history.find((entry) => entry.id === openHistoryMenuId);
-  if (!item || !editable()) return;
+  if (!openHistoryMenuId || !editable() || selectedHistoryIds.size === 0) return;
+  const ids = new Set(selectedHistoryIds);
+  const selected = editorState.history.filter((entry) => ids.has(entry.id));
+  const pinned = !selected.every((entry) => entry.pinned);
   openHistoryMenuId = null;
-  mutate((state) => setPinned(state, item.id, !item.pinned));
+  mutate((state) => setPinnedMany(state, ids, pinned));
 });
 $("history-delete").addEventListener("click", () => {
-  const item = editorState?.history.find((entry) => entry.id === openHistoryMenuId);
-  if (!item || !editable()) return;
+  if (!openHistoryMenuId || !editable() || selectedHistoryIds.size === 0) return;
+  const ids = new Set(selectedHistoryIds);
   openHistoryMenuId = null;
-  selectedHistoryId = null;
-  mutate((state) => deleteHistory(state, item.id));
+  selectedHistoryIds.clear();
+  mutate((state) => deleteHistoryMany(state, ids));
 });
 $("delete-block").addEventListener("click", () => {
   if (!selectedBlockId) return;
@@ -608,7 +619,7 @@ $("clear-document").addEventListener("click", () => {
 });
 $("clear-history").addEventListener("click", () => {
   if (confirm("ピン留めを含む履歴をすべて消去しますか？")) {
-    selectedHistoryId = null;
+    selectedHistoryIds.clear();
     openHistoryMenuId = null;
     mutate(clearHistory);
   }

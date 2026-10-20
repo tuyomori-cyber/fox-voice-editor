@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock,
-  moveBlock, reorderBlocks, setPinned, deleteHistory, joinedText, HISTORY_LIMIT
+  moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
+  joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
 
 const time = "2026-10-19T00:00:00.000Z";
@@ -60,6 +61,22 @@ test("unpinned history is capped while pinned entries survive", () => {
   assert.ok(!state.history.some((h) => h.text === "項目0"));
   state = setPinned(state, pinnedId, false);
   assert.equal(state.history.find((h) => h.id === pinnedId).pinned, false);
+});
+
+test("bulk pin and deletion affect only selected history, not document blocks", () => {
+  let state = voice(initialState(), "追加A", 0, "a");
+  state = voice(state, "追加B", 1, "b");
+  const selectedIds = state.history.filter((h) => ["追加A", "追加B"].includes(h.text)).map((h) => h.id);
+  const other = state.history.find((h) => h.text !== "追加A" && h.text !== "追加B");
+  state = setPinnedMany(state, selectedIds, true);
+  assert.ok(selectedIds.every((id) => state.history.find((h) => h.id === id).pinned));
+  assert.equal(state.history.find((h) => h.id === other.id).pinned, other.pinned);
+  state = setPinnedMany(state, selectedIds, false);
+  assert.ok(selectedIds.every((id) => !state.history.find((h) => h.id === id).pinned));
+  state = deleteHistoryMany(state, selectedIds);
+  assert.ok(selectedIds.every((id) => !state.history.some((h) => h.id === id)));
+  assert.ok(state.history.some((h) => h.id === other.id));
+  assert.equal(joinedText(state), "追加A追加B");
 });
 
 test("invalid persisted state is rejected without silent reset", () => {
