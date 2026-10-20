@@ -1,5 +1,5 @@
 import {
-  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock, moveBlock, reorderBlocks,
+  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlocks, moveBlock, reorderBlocks,
   setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
@@ -39,7 +39,8 @@ let stopAt = null;
 let cancelRequested = false;
 let historyVisibleCount = 30;
 const selectedHistoryIds = new Set();
-let selectedBlockId = null;
+const selectedBlockIds = new Set();
+let openBlockMenuId = null;
 let openHistoryMenuId = null;
 let dragState = null;
 
@@ -64,6 +65,13 @@ function showError(message) {
 function renderBlocks() {
   blocksNode.replaceChildren();
   const blocks = editorState.document.blocks;
+  const existingIds = new Set(blocks.map((block) => block.id));
+  for (const id of selectedBlockIds) {
+    if (!existingIds.has(id)) selectedBlockIds.delete(id);
+  }
+  if (openBlockMenuId && !selectedBlockIds.has(openBlockMenuId)) {
+    openBlockMenuId = [...selectedBlockIds].at(-1) ?? null;
+  }
   for (const block of blocks) {
     const article = document.createElement("article");
     article.className = "block";
@@ -72,13 +80,15 @@ function renderBlocks() {
     article.setAttribute("role", "button");
     article.setAttribute("aria-label", `${block.text}。タップで操作、ドラッグで並べ替え`);
     article.textContent = block.text;
-    if (block.id === selectedBlockId) article.classList.add("is-selected");
+    article.setAttribute("aria-pressed", String(selectedBlockIds.has(block.id)));
+    article.setAttribute("aria-expanded", String(openBlockMenuId === block.id));
+    if (selectedBlockIds.has(block.id)) article.classList.add("is-selected");
     article.addEventListener("pointerdown", (event) => onBlockPointerDown(event, block.id));
     article.addEventListener("keydown", (event) => {
       if (!editable()) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openBlockMenu(block.id);
+        toggleBlockSelection(block.id);
       } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
         mutate((state) => moveBlock(state, block.id, event.key === "ArrowLeft" ? -1 : 1));
@@ -86,8 +96,8 @@ function renderBlocks() {
     });
     blocksNode.append(article);
   }
-  if (!blocks.some((block) => block.id === selectedBlockId)) closeBlockMenu();
-  else if (!blockMenu.hidden) positionBlockMenu();
+  blockMenu.hidden = !openBlockMenuId || selectedBlockIds.size === 0;
+  syncBlockMenuActions();
 }
 
 function phraseBlock(item) {
@@ -99,7 +109,6 @@ function phraseBlock(item) {
       selectedHistoryIds.add(item.id);
       openHistoryMenuId = item.id;
     }
-    closeBlockMenu();
     renderHistory();
   }, !editable());
   block.className = "history-block";
@@ -225,7 +234,8 @@ function mutate(change) {
 }
 
 function positionBlockMenu() {
-  const card = [...blocksNode.children].find((node) => node.dataset.blockId === selectedBlockId);
+  if (blockMenu.hidden || !openBlockMenuId) return;
+  const card = [...blocksNode.children].find((node) => node.dataset.blockId === openBlockMenuId);
   if (!card) return;
   const rect = card.getBoundingClientRect();
   const width = blockMenu.offsetWidth;
@@ -235,41 +245,52 @@ function positionBlockMenu() {
   blockMenu.style.top = `${below + blockMenu.offsetHeight > window.innerHeight ? Math.max(8, rect.top - blockMenu.offsetHeight - 8) : below}px`;
 }
 
-function closeBlockMenu() {
-  selectedBlockId = null;
+function hideBlockMenu() {
+  openBlockMenuId = null;
   blockMenu.hidden = true;
-  for (const card of blocksNode.children) card.classList.remove("is-selected");
+  for (const card of blocksNode.children) card.setAttribute("aria-expanded", "false");
+}
+
+function clearBlockSelection() {
+  selectedBlockIds.clear();
+  hideBlockMenu();
+  for (const card of blocksNode.children) {
+    card.classList.remove("is-selected");
+    card.setAttribute("aria-pressed", "false");
+  }
 }
 
 function syncBlockMenuActions() {
-  const hasSelectedHistory = selectedHistoryIds.size === 1;
-  $("insert-before").hidden = !hasSelectedHistory;
-  $("insert-after").hidden = !hasSelectedHistory;
+  const canInsert = selectedHistoryIds.size === 1 && selectedBlockIds.size === 1;
+  $("insert-before").hidden = !canInsert;
+  $("insert-after").hidden = !canInsert;
+  $("delete-block").textContent = selectedBlockIds.size > 1 ? `削除（${selectedBlockIds.size}件）` : "削除";
   if (!blockMenu.hidden) positionBlockMenu();
 }
 
-function openBlockMenu(blockId) {
+function toggleBlockSelection(blockId) {
   if (!editable()) return;
-  if (selectedBlockId === blockId && !blockMenu.hidden) {
-    closeBlockMenu();
-    return;
+  if (selectedBlockIds.has(blockId)) {
+    selectedBlockIds.delete(blockId);
+    openBlockMenuId = [...selectedBlockIds].at(-1) ?? null;
+  } else {
+    selectedBlockIds.add(blockId);
+    openBlockMenuId = blockId;
   }
-  selectedBlockId = blockId;
   openHistoryMenuId = null;
   historyMenu.hidden = true;
-  for (const card of blocksNode.children) card.classList.toggle("is-selected", card.dataset.blockId === blockId);
-  syncBlockMenuActions();
-  blockMenu.hidden = false;
-  positionBlockMenu();
+  renderBlocks();
+  renderHistory();
 }
 
 function insertRelative(after) {
-  if (!editable() || !selectedBlockId || selectedHistoryIds.size !== 1) return;
-  const index = editorState.document.blocks.findIndex((block) => block.id === selectedBlockId);
+  if (!editable() || selectedBlockIds.size !== 1 || selectedHistoryIds.size !== 1) return;
+  const blockId = selectedBlockIds.values().next().value;
+  const index = editorState.document.blocks.findIndex((block) => block.id === blockId);
   if (index < 0) return;
   const insertionIndex = index + Number(after);
   const historyId = selectedHistoryIds.values().next().value;
-  closeBlockMenu();
+  clearBlockSelection();
   mutate((state) => insertFromHistory(state, historyId, insertionIndex, newId(), now()));
 }
 
@@ -288,7 +309,7 @@ function onBlockPointerMove(event) {
   if (!drag.dragged && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 8) return;
   if (!drag.dragged) {
     drag.dragged = true;
-    closeBlockMenu();
+    hideBlockMenu();
     drag.card.classList.add("is-dragging");
     document.body.classList.add("is-dragging");
   }
@@ -315,7 +336,7 @@ function endBlockPointer(event, cancelled) {
     const order = [...blocksNode.children].map((card) => card.dataset.blockId);
     mutate((state) => reorderBlocks(state, order));
   } else {
-    openBlockMenu(drag.blockId);
+    toggleBlockSelection(drag.blockId);
   }
 }
 
@@ -364,7 +385,7 @@ function beginRecording() {
     return;
   }
   pendingTarget = { kind: "insert", index: editorState.document.blocks.length };
-  closeBlockMenu();
+  clearBlockSelection();
   setHostState("starting");
   post("start_recording");
 }
@@ -600,20 +621,22 @@ $("history-delete").addEventListener("click", () => {
   mutate((state) => deleteHistoryMany(state, ids));
 });
 $("delete-block").addEventListener("click", () => {
-  if (!selectedBlockId) return;
-  const id = selectedBlockId;
-  closeBlockMenu();
-  mutate((state) => deleteBlock(state, id));
+  if (!editable() || selectedBlockIds.size === 0) return;
+  const ids = new Set(selectedBlockIds);
+  clearBlockSelection();
+  mutate((state) => deleteBlocks(state, ids));
 });
 $("load-more").addEventListener("click", () => {
   historyVisibleCount += 30;
   renderHistory();
 });
 window.addEventListener("scroll", positionHistoryMenu, true);
+window.addEventListener("scroll", positionBlockMenu, true);
 window.addEventListener("resize", positionHistoryMenu);
+window.addEventListener("resize", positionBlockMenu);
 $("clear-document").addEventListener("click", () => {
   if (confirm("現在の文書をすべて消去しますか？")) {
-    closeBlockMenu();
+    clearBlockSelection();
     mutate(clearDocument);
   }
 });

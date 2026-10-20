@@ -79,7 +79,12 @@ export function insertFromHistory(state, historyId, index, blockId, now) {
 }
 
 export function deleteBlock(state, blockId) {
-  return withBlocks(state, state.document.blocks.filter((b) => b.id !== blockId));
+  return deleteBlocks(state, [blockId]);
+}
+
+export function deleteBlocks(state, blockIds) {
+  const ids = new Set(blockIds);
+  return withBlocks(state, state.document.blocks.filter((b) => !ids.has(b.id)));
 }
 
 export function moveBlock(state, blockId, direction) {

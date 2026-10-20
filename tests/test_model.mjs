@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock,
+  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock, deleteBlocks,
   moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
@@ -37,6 +37,17 @@ test("history reuse creates independent block and deletion preserves document", 
   assert.equal(state.document.blocks.length, 2);
   state = deleteBlock(state, "b1");
   assert.equal(state.document.blocks[0].id, "b2");
+});
+
+test("bulk block deletion preserves unselected blocks and history", () => {
+  let state = voice(initialState(), "A", 0, "a");
+  state = voice(state, "B", 1, "b");
+  state = voice(state, "C", 2, "c");
+  const historyBefore = state.history;
+  state = deleteBlocks(state, ["a", "c"]);
+  assert.deepEqual(state.document.blocks.map((block) => block.id), ["b"]);
+  assert.equal(joinedText(state), "B");
+  assert.equal(state.history, historyBefore);
 });
 
 test("drag order persists as an exact permutation of block ids", () => {
