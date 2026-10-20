@@ -54,6 +54,10 @@
         <h2 id="history-title">履歴</h2>
         <p id="selected-history" role="status">語句を選択するとブロックの前後へ挿入できます。</p>
         <div id="history-items"></div>
+        <div id="history-menu" class="context-menu" role="group" aria-label="選択した履歴の操作" hidden>
+          <button id="history-pin" type="button">ピン留め</button>
+          <button id="history-delete" type="button">履歴から削除</button>
+        </div>
         <button id="load-more" type="button" hidden>さらに表示</button>
         <button id="clear-history" type="button">履歴をすべて消去</button>
       </section>

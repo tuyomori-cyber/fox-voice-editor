@@ -15,6 +15,7 @@ const timerNode = $("timer");
 const blocksNode = $("blocks");
 const blockMenu = $("block-menu");
 const historyItemsNode = $("history-items");
+const historyMenu = $("history-menu");
 const selectedHistoryNode = $("selected-history");
 const previewNode = $("preview");
 const saveStatusNode = $("save-status");
@@ -89,42 +90,37 @@ function renderBlocks() {
   else if (!blockMenu.hidden) positionBlockMenu();
 }
 
-function phraseRow(item) {
-  const row = document.createElement("div");
-  row.className = "phrase-row";
-  const label = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
-    selectedHistoryId = selectedHistoryId === item.id ? null : item.id;
+function phraseBlock(item) {
+  const block = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
+    if (selectedHistoryId === item.id && openHistoryMenuId === item.id) {
+      selectedHistoryId = null;
+      openHistoryMenuId = null;
+    } else {
+      selectedHistoryId = item.id;
+      openHistoryMenuId = item.id;
+    }
     closeBlockMenu();
     renderHistory();
   }, !editable());
-  label.className = "history-text";
-  label.setAttribute("aria-pressed", String(selectedHistoryId === item.id));
-  if (selectedHistoryId === item.id) row.classList.add("is-selected");
-  const more = button("…", () => {
-    openHistoryMenuId = openHistoryMenuId === item.id ? null : item.id;
-    renderHistory();
-  }, !editable());
-  more.className = "more-button";
-  more.setAttribute("aria-label", `${item.text}の操作`);
-  more.setAttribute("aria-expanded", String(openHistoryMenuId === item.id));
-  row.append(label, more);
-  if (openHistoryMenuId === item.id) {
-    const actions = document.createElement("div");
-    actions.className = "history-actions";
-    actions.append(
-      button(item.pinned ? "ピンを外す" : "ピン留め", () => {
-        openHistoryMenuId = null;
-        mutate((state) => setPinned(state, item.id, !item.pinned));
-      }, !editable()),
-      button("履歴から削除", () => {
-        openHistoryMenuId = null;
-        if (selectedHistoryId === item.id) selectedHistoryId = null;
-        mutate((state) => deleteHistory(state, item.id));
-      }, !editable())
-    );
-    row.append(actions);
-  }
-  return row;
+  block.className = "history-block";
+  block.dataset.historyId = item.id;
+  block.setAttribute("aria-pressed", String(selectedHistoryId === item.id));
+  block.setAttribute("aria-expanded", String(openHistoryMenuId === item.id));
+  if (selectedHistoryId === item.id) block.classList.add("is-selected");
+  return block;
+}
+
+function positionHistoryMenu() {
+  if (historyMenu.hidden || !openHistoryMenuId) return;
+  const block = [...historyItemsNode.querySelectorAll(".history-block")]
+    .find((node) => node.dataset.historyId === openHistoryMenuId);
+  if (!block) return;
+  const rect = block.getBoundingClientRect();
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - historyMenu.offsetWidth - 8));
+  const below = rect.bottom + 8;
+  historyMenu.style.left = `${left}px`;
+  historyMenu.style.top = `${below + historyMenu.offsetHeight > window.innerHeight
+    ? Math.max(8, rect.top - historyMenu.offsetHeight - 8) : below}px`;
 }
 
 function renderHistory() {
@@ -132,19 +128,33 @@ function renderHistory() {
   const pinned = editorState.history.filter((h) => h.pinned);
   const normal = editorState.history.filter((h) => !h.pinned);
   if (selectedHistoryId && !editorState.history.some((h) => h.id === selectedHistoryId)) selectedHistoryId = null;
+  if (openHistoryMenuId && openHistoryMenuId !== selectedHistoryId) openHistoryMenuId = null;
   const selected = editorState.history.find((h) => h.id === selectedHistoryId);
   selectedHistoryNode.textContent = selected
     ? `選択中: ${selected.text}（再タップで解除）`
     : "語句を選択するとブロックの前後へ挿入できます。";
   syncBlockMenuActions();
-  for (const item of [...pinned, ...normal.slice(0, historyVisibleCount)]) {
-    historyItemsNode.append(phraseRow(item));
+  for (const [items, kind] of [[pinned, "pinned"], [normal.slice(0, historyVisibleCount), "normal"]]) {
+    if (items.length === 0) continue;
+    const group = document.createElement("div");
+    group.className = `history-group ${kind}`;
+    for (const item of items) group.append(phraseBlock(item));
+    historyItemsNode.append(group);
   }
   if (editorState.history.length === 0) {
     const empty = document.createElement("p");
     empty.textContent = "履歴はありません。";
     historyItemsNode.append(empty);
   }
+  const menuItem = editorState.history.find((h) => h.id === openHistoryMenuId);
+  const menuBlockVisible = [...historyItemsNode.querySelectorAll(".history-block")]
+    .some((node) => node.dataset.historyId === openHistoryMenuId);
+  historyMenu.hidden = !menuItem || !menuBlockVisible;
+  if (!historyMenu.hidden) {
+    $("history-pin").textContent = menuItem.pinned ? "ピンを外す" : "ピン留め";
+    positionHistoryMenu();
+  }
+  for (const action of historyMenu.querySelectorAll("button")) action.disabled = !editable();
   $("load-more").hidden = normal.length <= historyVisibleCount;
   $("clear-history").disabled = !editable() || editorState.history.length === 0;
 }
@@ -236,6 +246,8 @@ function openBlockMenu(blockId) {
     return;
   }
   selectedBlockId = blockId;
+  openHistoryMenuId = null;
+  historyMenu.hidden = true;
   for (const card of blocksNode.children) card.classList.toggle("is-selected", card.dataset.blockId === blockId);
   syncBlockMenuActions();
   blockMenu.hidden = false;
@@ -563,6 +575,19 @@ $("cancel").addEventListener("click", () => {
 });
 $("insert-before").addEventListener("click", () => insertRelative(false));
 $("insert-after").addEventListener("click", () => insertRelative(true));
+$("history-pin").addEventListener("click", () => {
+  const item = editorState?.history.find((entry) => entry.id === openHistoryMenuId);
+  if (!item || !editable()) return;
+  openHistoryMenuId = null;
+  mutate((state) => setPinned(state, item.id, !item.pinned));
+});
+$("history-delete").addEventListener("click", () => {
+  const item = editorState?.history.find((entry) => entry.id === openHistoryMenuId);
+  if (!item || !editable()) return;
+  openHistoryMenuId = null;
+  selectedHistoryId = null;
+  mutate((state) => deleteHistory(state, item.id));
+});
 $("delete-block").addEventListener("click", () => {
   if (!selectedBlockId) return;
   const id = selectedBlockId;
@@ -573,6 +598,8 @@ $("load-more").addEventListener("click", () => {
   historyVisibleCount += 30;
   renderHistory();
 });
+window.addEventListener("scroll", positionHistoryMenu, true);
+window.addEventListener("resize", positionHistoryMenu);
 $("clear-document").addEventListener("click", () => {
   if (confirm("現在の文書をすべて消去しますか？")) {
     closeBlockMenu();
