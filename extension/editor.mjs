@@ -43,6 +43,7 @@ const selectedBlockIds = new Set();
 let openBlockMenuId = null;
 let openHistoryMenuId = null;
 let dragState = null;
+let blockInteractionMode = "select";
 
 const busyStates = new Set(["preparing", "starting", "recording", "stopping", "converting", "recognizing", "cancelling", "syncing"]);
 const editable = () => editorState !== null && !busyStates.has(hostState);
@@ -64,6 +65,7 @@ function showError(message) {
 
 function renderBlocks() {
   blocksNode.replaceChildren();
+  blocksNode.classList.toggle("is-reordering", blockInteractionMode === "reorder");
   const blocks = editorState.document.blocks;
   const existingIds = new Set(blocks.map((block) => block.id));
   for (const id of selectedBlockIds) {
@@ -73,28 +75,31 @@ function renderBlocks() {
     openBlockMenuId = [...selectedBlockIds].at(-1) ?? null;
   }
   for (const block of blocks) {
-    const article = document.createElement("article");
-    article.className = "block";
-    article.dataset.blockId = block.id;
-    article.tabIndex = editable() ? 0 : -1;
-    article.setAttribute("role", "button");
-    article.setAttribute("aria-label", `${block.text}。タップで操作、ドラッグで並べ替え`);
-    article.textContent = block.text;
-    article.setAttribute("aria-pressed", String(selectedBlockIds.has(block.id)));
-    article.setAttribute("aria-expanded", String(openBlockMenuId === block.id));
-    if (selectedBlockIds.has(block.id)) article.classList.add("is-selected");
-    article.addEventListener("pointerdown", (event) => onBlockPointerDown(event, block.id));
-    article.addEventListener("keydown", (event) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "block";
+    card.dataset.blockId = block.id;
+    card.disabled = !editable();
+    card.setAttribute("aria-label", blockInteractionMode === "reorder"
+      ? `${block.text}。ドラッグで並べ替え`
+      : `${block.text}。タップで操作`);
+    card.textContent = block.text;
+    card.setAttribute("aria-pressed", String(selectedBlockIds.has(block.id)));
+    card.setAttribute("aria-expanded", String(openBlockMenuId === block.id));
+    if (selectedBlockIds.has(block.id)) card.classList.add("is-selected");
+    card.addEventListener("click", () => {
+      if (!editable() || blockInteractionMode !== "select" || card.dataset.ignoreClick === "true") return;
+      toggleBlockSelection(block.id);
+    });
+    card.addEventListener("pointerdown", (event) => onBlockPointerDown(event, block.id));
+    card.addEventListener("keydown", (event) => {
       if (!editable()) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        toggleBlockSelection(block.id);
-      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (blockInteractionMode === "reorder" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
         event.preventDefault();
         mutate((state) => moveBlock(state, block.id, event.key === "ArrowLeft" ? -1 : 1));
       }
     });
-    blocksNode.append(article);
+    blocksNode.append(card);
   }
   blockMenu.hidden = !openBlockMenuId || selectedBlockIds.size === 0;
   syncBlockMenuActions();
@@ -186,6 +191,10 @@ function render() {
   previewNode.textContent = preview;
   $("copy").disabled = !editable() || !preview;
   $("clear-document").disabled = !editable() || editorState.document.blocks.length === 0;
+  const modeButton = $("toggle-reorder");
+  modeButton.disabled = !editable() || editorState.document.blocks.length < 2;
+  modeButton.textContent = blockInteractionMode === "reorder" ? "並べ替えを完了" : "並べ替え";
+  modeButton.setAttribute("aria-pressed", String(blockInteractionMode === "reorder"));
   for (const action of blockMenu.querySelectorAll("button")) action.disabled = !editable();
 }
 
@@ -303,12 +312,12 @@ function insertRelative(after) {
 }
 
 function onBlockPointerDown(event, blockId) {
-  if (!editable() || event.button !== 0 || dragState) return;
-  dragState = { pointerId: event.pointerId, card: event.currentTarget, blockId,
+  if (!editable() || blockInteractionMode !== "reorder" || !event.isPrimary || dragState || (event.pointerType === "mouse" && event.button !== 0)) return;
+  event.preventDefault();
+  const card = event.currentTarget;
+  blocksNode.setPointerCapture(event.pointerId);
+  dragState = { pointerId: event.pointerId, card, blockId,
     x: event.clientX, y: event.clientY, dragged: false };
-  window.addEventListener("pointermove", onBlockPointerMove);
-  window.addEventListener("pointerup", onBlockPointerEnd);
-  window.addEventListener("pointercancel", onBlockPointerCancel);
 }
 
 function onBlockPointerMove(event) {
@@ -322,8 +331,13 @@ function onBlockPointerMove(event) {
     document.body.classList.add("is-dragging");
   }
   event.preventDefault();
-  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".block");
-  if (!target || target === drag.card || target.parentElement !== blocksNode) return;
+  const target = [...blocksNode.children].find((card) => {
+    if (card === drag.card) return false;
+    const rect = card.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  });
+  if (!target) return;
   const rect = target.getBoundingClientRect();
   const after = event.clientY > rect.bottom || (event.clientY >= rect.top && event.clientX > rect.left + rect.width / 2);
   blocksNode.insertBefore(drag.card, after ? target.nextSibling : target);
@@ -333,23 +347,29 @@ function endBlockPointer(event, cancelled) {
   if (!dragState || event.pointerId !== dragState.pointerId) return;
   const drag = dragState;
   dragState = null;
-  window.removeEventListener("pointermove", onBlockPointerMove);
-  window.removeEventListener("pointerup", onBlockPointerEnd);
-  window.removeEventListener("pointercancel", onBlockPointerCancel);
+  if (blocksNode.hasPointerCapture(event.pointerId)) blocksNode.releasePointerCapture(event.pointerId);
   drag.card.classList.remove("is-dragging");
   document.body.classList.remove("is-dragging");
   if (cancelled) {
     if (drag.dragged) renderBlocks();
   } else if (drag.dragged) {
+    drag.card.dataset.ignoreClick = "true";
     const order = [...blocksNode.children].map((card) => card.dataset.blockId);
     mutate((state) => reorderBlocks(state, order));
-  } else {
+  } else if (blockInteractionMode === "select") {
+    // Pointer Capture makes the compatibility click target the editor area,
+    // so finish a tap here while preserving keyboard click handling.
+    drag.card.dataset.ignoreClick = "true";
     toggleBlockSelection(drag.blockId);
   }
 }
 
 function onBlockPointerEnd(event) { endBlockPointer(event, false); }
 function onBlockPointerCancel(event) { endBlockPointer(event, true); }
+
+blocksNode.addEventListener("pointermove", onBlockPointerMove);
+blocksNode.addEventListener("pointerup", onBlockPointerEnd);
+blocksNode.addEventListener("pointercancel", onBlockPointerCancel);
 
 function setHostState(nextState) {
   hostState = nextState;
@@ -641,6 +661,15 @@ $("delete-block").addEventListener("click", () => {
 $("clear-block-selection").addEventListener("click", () => {
   if (!editable()) return;
   clearBlockSelection();
+});
+$("toggle-reorder").addEventListener("click", () => {
+  if (!editable()) return;
+  blockInteractionMode = blockInteractionMode === "reorder" ? "select" : "reorder";
+  if (blockInteractionMode === "reorder") {
+    clearBlockSelection();
+    resetHistorySelection();
+  }
+  render();
 });
 $("load-more").addEventListener("click", () => {
   historyVisibleCount += 30;

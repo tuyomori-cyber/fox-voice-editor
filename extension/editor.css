@@ -28,14 +28,15 @@ button:disabled { cursor: default; }
 #timer { margin: .2rem 0; font-size: .85rem; white-space: pre-line; }
 #error { color: #d95959; min-height: 1.2rem; margin: .2rem 0 .8rem; }
 #blocks { display: flex; flex-wrap: wrap; align-content: flex-start; gap: .65rem; min-height: 9rem; padding: .75rem; border: 1px dashed #8888; border-radius: .6rem; }
-.block { display: flex; align-items: center; max-width: 100%; min-height: 3.4rem; padding: .7rem 1rem; border: 1px solid #888; border-radius: .7rem; background: #8882; font-size: 1.12rem; white-space: pre-wrap; overflow-wrap: anywhere; cursor: grab; user-select: none; touch-action: none; }
+.block { display: flex; align-items: center; max-width: 100%; min-height: 3.4rem; padding: .7rem 1rem; border: 1px solid #888; border-radius: .7rem; background: #8882; color: inherit; font-size: 1.12rem; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; user-select: none; touch-action: manipulation; }
+#blocks.is-reordering .block { cursor: grab; touch-action: none; }
 .block.is-selected, .history-block.is-selected {
   background: var(--selected-background);
   border-color: var(--selected-border);
   outline: 3px solid var(--selected-border);
   outline-offset: 2px;
 }
-.block.is-dragging { opacity: .65; cursor: grabbing; pointer-events: none; outline: 2px dashed #63a6ff; }
+.block.is-dragging { opacity: .65; cursor: grabbing; outline: 2px dashed #63a6ff; }
 body.is-dragging { user-select: none; }
 .context-menu {
   position: fixed;

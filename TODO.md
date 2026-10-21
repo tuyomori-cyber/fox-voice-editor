@@ -46,6 +46,12 @@
 - [ ] Surfaceで`whisper-cli`を再ビルドし、Cageでマイク入力、tiny/baseの認識品質・A/B/C・停止から結果表示までの総時間・メモリを測る。仮目標は3秒以内、5秒以内を実用範囲として再評価する。
 - [x] `browser.storage.local`による保存、ドラッグによるブロック移動、ブロック編集、履歴・ピン留め、プレビュー・コピーを実装する。
 - [ ] 更新したFirefox画面で、編集ブロックの複数選択・一括削除、履歴の複数選択・一括ピン留め・削除後の選択解除、左右の「選択解除（すべて）」、左右各1件選択時だけの前後挿入、ドラッグ並べ替え、選択メニューの明暗両テーマでの見やすさを確認する。SurfaceではタッチだけでCodex入力欄へ貼り付けるまで確認する。
+- [x] Surface調査で、録音結果ブロックだけが独自のPointer Events（`pointerdown`→`pointermove`→`window`の`pointerup`）と`touch-action: none`で選択・ドラッグを判定し、履歴は標準`button`の`click`を使う実装差を確認した。Pointer Captureを加えたが改善しなかったため、録音結果ブロックも`button`と標準`click`による選択へ変更し、Pointer Eventsはドラッグに限定した。
+- [x] `button`化後にドラッグ対象へ`pointer-events: none`を残すとFirefoxでドラッグ不能になったため削除した。入れ替え先は`elementFromPoint()`ではなく各ブロックの矩形で判定する。
+- [x] カード自身へのPointer Captureでも実機で改善しなかったため、再描画されない編集領域コンテナでPointer Captureと移動・終了イベントを処理するよう変更した。
+- [x] 編集領域へPointer Captureを移したことで互換`click`がカードへ届かず選択を失ったため、ドラッグしていないPointer終了時に選択を確定し、後続の互換`click`による二重選択を抑止した。
+- [x] Surfaceでは選択とドラッグの同時操作が安定しなかったため、通常の選択モードと明示的な並べ替えモードへ分離した。選択モードは標準タップ、並べ替えモードは選択を停止してPointer Eventsだけで並べ替える。
+- [x] Surfaceで録音結果ブロックの単一選択・複数選択・選択解除・ドラッグ並べ替えを確認した。選択モードと並べ替えモードの両方がタッチで動作した。
 - [ ] Surface実測後に録音トグルと前後挿入の操作感、録音時間上限、JSON契約、拡張IDを確定する。
 - [ ] Surface端末で補正を明示有効化し、接続時の確認、失敗時の録音抑止、手動再確認、WirePlumber再起動後の再補正を確認する。ブースト値・録音品質・所要時間も記録する。
 - [x] Surfaceで`~/.config/fox-voice-editor/microphone.json`を`{"boost_fix": true}`にし、左右0を確認する。
