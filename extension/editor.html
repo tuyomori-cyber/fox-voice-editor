@@ -47,8 +47,17 @@
         <div class="section-heading preview-heading">
           <h2 id="preview-title">プレビュー</h2>
           <button id="copy" type="button" disabled>コピー</button>
+          <button id="send-focodex" type="button" disabled>Focodexへ貼り付け</button>
         </div>
         <p id="preview" class="preview"></p>
+        <p id="focodex-status" role="status" aria-live="polite"></p>
+        <button id="check-focodex" type="button" disabled>同じ文章を再送</button>
+        <details>
+          <summary>Focodex連携の設定</summary>
+          <label for="focodex-target">送信先の拡張ID</label>
+          <input id="focodex-target" type="text" maxlength="256" value="focodex@foxbook.example">
+          <button id="save-focodex-target" type="button">送信先を保存</button>
+        </details>
         <p id="save-status" role="status" aria-live="polite"></p>
       </section>
 

@@ -1,5 +1,8 @@
 # fox-voice-editor 仕様書 v0.1.7（試作・MVP）
 
+
+2026-10-22追記：Focodexへの受信バッファ転送は[追加仕様](specification-focodex連携.md)で拡張する。以下のMVP範囲はv0.1.7策定時点のもの。
+
 作成日：2026-10-19　改訂日：2026-10-20  
 状態：v0.1.6の機能・マイク補正・Whisper計測を維持し、認識エンジン選択とReazonSpeech K2 INT8の事前初期化・セッション中再利用を仕様化。専用Worker・Host・拡張UIを試作実装し、このPCのHost経由で3連続認識を確認。SurfaceのFirefox画面でも録音・結果表示を確認したが、連続録音時の準備回数と終了時のWorker回収は未検証。
 

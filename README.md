@@ -59,3 +59,15 @@ node tests/test_model.mjs
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 python3 tests/check_reazon_worker.py
 ```
+
+## Focodexへ貼り付け
+
+プレビュー横の「Focodexへ貼り付け」で、コピーと同じ文章をFocodexの指示文欄へ渡せます。両拡張は同じFirefoxプロファイルに読み込んでください。既定の送信先は`focodex@foxbook.example`です。送信先IDは「Focodex連携の設定」で変更・保存できます。
+
+Focodexは文章を最大3件のFIFO受信バッファへ保存し、入力欄を自動変更しません。ユーザーがバッファ項目の「指示文へ」を押して反映します。受信だけではCodexを実行しません。
+
+応答を受け取れなかった場合は、「同じ文章を再送」で同じID・本文を明示再送できます。自動再送と状態照会はありません。更新後は両拡張と既存の操作タブを手動で再読み込みしてください。実装条件は[追加仕様](specification-focodex連携.md)を参照してください。Firefox実配送・Split View・Surfaceタッチの確認は未実施です。
+
+```bash
+node tests/test_focodex_send.mjs
+```

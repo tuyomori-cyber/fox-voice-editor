@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {DEFAULT_TARGET, sendDraft, statusText} from '../extension/focodex-send.mjs';
+const requestId = '00000000-0000-4000-8000-000000000001';
+const calls = [];
+const runtime = {sendMessage: async (target, message) => {
+  calls.push({target, message});
+  return {version: 1, requestId, status: 'accepted'};
+}};
+const text = 'Firefoxの設定を確認。\n😀 <script>文字として送る</script>';
+assert.equal((await sendDraft(runtime, DEFAULT_TARGET, requestId, text)).status, 'accepted');
+assert.equal(calls[0].message.text, text);
+assert.equal(calls[0].target, DEFAULT_TARGET);
+assert.deepEqual(Object.keys(calls[0].message).sort(), ['requestId', 'text', 'type', 'version']);
+const count = calls.length;
+await assert.rejects(sendDraft(runtime, DEFAULT_TARGET, requestId, ' '));
+await assert.rejects(sendDraft(runtime, DEFAULT_TARGET, requestId, '😀'.repeat(10001)));
+assert.equal(calls.length, count);
+await sendDraft(runtime, DEFAULT_TARGET, requestId, '😀'.repeat(10000));
+await assert.rejects(sendDraft({sendMessage: async () => ({version: 1, requestId: 'wrong', status: 'accepted'})}, DEFAULT_TARGET, requestId, text));
+let attempts = 0;
+await assert.rejects(sendDraft({sendMessage: async () => { attempts++; throw Error('disconnect'); }}, DEFAULT_TARGET, requestId, text));
+assert.equal(attempts, 1, 'never retry a send automatically');
+assert.match(statusText({status: 'accepted'}), /保存/);
+assert.match(statusText({status: 'duplicate'}), /既に/);
+assert.match(statusText({status: 'rejected', reason: 'unauthorized'}), /許可/);
+console.log('Focodex sender contract tests passed');

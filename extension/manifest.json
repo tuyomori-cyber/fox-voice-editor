@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "fox-voice-editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "音声ブロックをタッチで組み立てるFirefox拡張",
   "browser_specific_settings": {
     "gecko": {

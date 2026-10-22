@@ -1,3 +1,4 @@
+import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-send.mjs";
 import {
   initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlocks, moveBlock, reorderBlocks,
   setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
@@ -20,6 +21,11 @@ const selectedHistoryNode = $("selected-history");
 const previewNode = $("preview");
 const saveStatusNode = $("save-status");
 
+let sendingFocodex = false;
+let focodexTransfer = null;
+let focodexTarget = DEFAULT_TARGET;
+const FOCODEX_TARGET_KEY = "focodexTarget";
+const FOCODEX_TRANSFER_KEY = "focodexTransfer";
 let port = null;
 let hostState = "connecting";
 let microphoneReady = false;
@@ -190,6 +196,8 @@ function render() {
   const preview = joinedText(editorState);
   previewNode.textContent = preview;
   $("copy").disabled = !editable() || !preview;
+  $("send-focodex").disabled = !editable() || !preview || sendingFocodex;
+  $("check-focodex").disabled = !focodexTransfer || sendingFocodex;
   $("clear-document").disabled = !editable() || editorState.document.blocks.length === 0;
   const modeButton = $("toggle-reorder");
   modeButton.disabled = !editable() || editorState.document.blocks.length < 2;
@@ -699,11 +707,50 @@ $("copy").addEventListener("click", async () => {
     showError(`コピーに失敗しました: ${error.message}`);
   }
 });
+$("save-focodex-target").addEventListener("click", async () => {
+  const target = $("focodex-target").value.trim();
+  if (!target || target.length > 256) { $("focodex-status").textContent = "送信先の拡張IDを確認してください。"; return; }
+  try {
+    await browser.storage.local.set({[FOCODEX_TARGET_KEY]: target});
+    focodexTarget = target;
+    $("focodex-status").textContent = "送信先を保存しました。既に送った文章の結果照会先は変わりません。";
+  } catch { $("focodex-status").textContent = "送信先を保存できません。"; }
+});
+async function transferToFocodex(checkOnly = false) {
+  if (sendingFocodex || (!checkOnly && !editable())) return;
+  if (checkOnly && !focodexTransfer) return;
+  sendingFocodex = true;
+  render();
+  try {
+    const text = checkOnly ? focodexTransfer?.text : joinedText(editorState);
+    if (!checkOnly) {
+      validateDraft(text);
+      // Persist the identity before sending: an interrupted response is recoverable.
+      const transfer = {target: focodexTarget, requestId: crypto.randomUUID(), text};
+      await browser.storage.local.set({[FOCODEX_TRANSFER_KEY]: transfer});
+      focodexTransfer = transfer;
+    }
+    const {target, requestId} = focodexTransfer;
+    const reply = await sendDraft(browser.runtime, target, requestId, text);
+    $("focodex-status").textContent = statusText(reply);
+  } catch (error) {
+    $("focodex-status").textContent = `結果を確認できません: ${error.message} 自動再送はしません。「Focodexへ貼り付け」を再試行してください。`;
+  } finally { sendingFocodex = false; render(); }
+}
+$("send-focodex").addEventListener("click", () => transferToFocodex());
+$("check-focodex").addEventListener("click", () => transferToFocodex(true));
 window.addEventListener("pagehide", () => port?.disconnect());
 
 async function initialize() {
   try {
-    const saved = await browser.storage.local.get([STORAGE_KEY, ENGINE_STORAGE_KEY]);
+    const saved = await browser.storage.local.get([STORAGE_KEY, ENGINE_STORAGE_KEY, FOCODEX_TARGET_KEY, FOCODEX_TRANSFER_KEY]);
+    focodexTarget = typeof saved[FOCODEX_TARGET_KEY] === "string" && saved[FOCODEX_TARGET_KEY].trim() ? saved[FOCODEX_TARGET_KEY] : DEFAULT_TARGET;
+    $("focodex-target").value = focodexTarget;
+    const transfer = saved[FOCODEX_TRANSFER_KEY];
+    if (typeof transfer?.target === "string" && typeof transfer?.requestId === "string") {
+      focodexTransfer = transfer;
+      $("focodex-status").textContent = typeof transfer.text === "string" ? "前回の送信記録があります。「受信結果を確認」で同じ文章を再送できます。" : "旧形式の送信記録があります。新規送信してください。";
+    }
     selectedEngine = ["whisper", "reazonspeech_k2"].includes(saved[ENGINE_STORAGE_KEY]) ? saved[ENGINE_STORAGE_KEY] : "whisper";
     editorState = restoreState(saved[STORAGE_KEY]);
     if (saved[STORAGE_KEY] === undefined) persist(editorState);

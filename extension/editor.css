@@ -84,3 +84,6 @@ body.is-dragging { user-select: none; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .workspace-panel { min-height: 0; }
 }
+
+#focodex-target { max-width: 100%; width: 26rem; min-height: 2.75rem; font: inherit; margin: .5rem 0; }
+#focodex-status { overflow-wrap: anywhere; }
