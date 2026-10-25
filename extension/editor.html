@@ -62,18 +62,21 @@
         <p id="focodex-status" role="status" aria-live="polite"></p>
         <button id="check-focodex" type="button" disabled>同じ文章を再送</button>
         <details>
-          <summary>Focodex連携の設定</summary>
-          <label for="focodex-target">送信先の拡張ID</label>
+          <summary>拡張連携設定</summary>
+          <label for="focodex-target">Focodexの送信先拡張ID</label>
           <input id="focodex-target" type="text" maxlength="256" value="focodex@foxbook.example">
-          <button id="save-focodex-target" type="button">送信先を保存</button>
+          <label for="fx-osk-target">FX-OSKの拡張ID</label>
+          <input id="fx-osk-target" type="text" maxlength="256" value="fx-osk-touch@tuyomori-cyber.github.io">
+          <button id="save-extension-targets" type="button">連携先を保存</button>
         </details>
         <p id="save-status" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="workspace-panel history-panel" aria-label="履歴と定型">
-        <div class="side-tabs" role="tablist" aria-label="履歴と定型">
+      <section class="workspace-panel history-panel" aria-label="履歴・定型・記号">
+        <div class="side-tabs" role="tablist" aria-label="履歴・定型・記号">
           <button id="history-tab" type="button" role="tab" aria-selected="true" aria-controls="history-view">履歴</button>
           <button id="fixed-tab" type="button" role="tab" aria-selected="false" aria-controls="fixed-view">定型</button>
+          <button id="symbol-tab" type="button" role="tab" aria-selected="false" aria-controls="symbol-view">記号</button>
         </div>
         <div id="history-view" role="tabpanel" aria-labelledby="history-tab">
           <p id="selected-history" role="status">語句をタップして選択。複数選択するとまとめてピン留め・削除できます。</p>
@@ -88,6 +91,9 @@
         </div>
         <div id="fixed-view" role="tabpanel" aria-labelledby="fixed-tab" hidden>
           <div id="fixed-items"></div>
+        </div>
+        <div id="symbol-view" role="tabpanel" aria-labelledby="symbol-tab" hidden>
+          <div id="symbol-items"></div>
         </div>
       </section>
     </div>

@@ -1,4 +1,12 @@
 export const HISTORY_LIMIT = 500;
+// 日本語JIS配列で直接入力または日本語入力で全角化して使う代表的な記号。
+// 半角・全角はプレビュー上も別の文字として扱うため、意図して両方を並べる。
+export const FIXED_SYMBOLS = [
+  "、", "。", "・", "「", "」", "『", "』", "【", "】", "〈", "〉", "《", "》", "〔", "〕", "｡", "｢", "｣", "､", "･", "ﾞ", "ﾟ",
+  "！", "＂", "＃", "＄", "％", "＆", "＇", "（", "）", "＊", "＋", "，", "－", "．", "／", "：", "；", "＜", "＝", "＞", "？", "＠", "［", "＼", "］", "＾", "＿", "｀", "｛", "｜", "｝", "～", "￥",
+  "…", "‥", "―", "ー", "〜", "￠", "￡", "€",
+  "!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", ":", ";", "<", "=", ">", "?", "@", "[", "\\", "]", "^", "_", "`", "{", "|", "}", "~", "¥"
+];
 const DEFAULT_PHRASES = ["の", "を", "ただし", "ではなく", "まず現状を調査", "既存機能は維持"];
 
 export function initialState() {
@@ -90,6 +98,20 @@ export function insertFromHistory(state, historyId, index, blockId, now) {
     insertBlock(state, index, { id: blockId, text: item.text, origin: "history" }),
     item.text, now, historyId
   );
+}
+
+export function insertFromTemplate(state, templateId, index, blockId, historyId, now) {
+  const item = state.templates.find((t) => t.id === templateId);
+  if (!item) throw new Error("定型が見つかりません。");
+  return touchTemplate(
+    touchHistory(insertBlock(state, index, { id: blockId, text: item.text, origin: "template" }), item.text, now, historyId),
+    item.text, now, templateId
+  );
+}
+
+export function insertSymbolBlock(state, text, index, blockId) {
+  if (!FIXED_SYMBOLS.includes(text)) throw new Error("追加する記号が不正です。");
+  return insertBlock(state, index, { id: blockId, text, origin: "symbol" });
 }
 
 export function appendManualBlock(state, text, blockId, historyId, now) {

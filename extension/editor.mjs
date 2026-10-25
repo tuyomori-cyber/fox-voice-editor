@@ -1,6 +1,7 @@
 import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-send.mjs";
+import { DEFAULT_FX_OSK_TARGET, validExtensionId, frameUrlFromReply, supportedKey } from "./fx-osk-bridge.mjs";
 import {
-  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, deleteBlocks, moveBlock, reorderBlocks,
+  FIXED_SYMBOLS, initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlocks, moveBlock, reorderBlocks,
   setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
@@ -19,6 +20,7 @@ const blocksNode = $("blocks");
 const blockMenu = $("block-menu");
 const historyItemsNode = $("history-items");
 const fixedItemsNode = $("fixed-items");
+const symbolItemsNode = $("symbol-items");
 const historyMenu = $("history-menu");
 const selectedHistoryNode = $("selected-history");
 const previewNode = $("preview");
@@ -30,6 +32,11 @@ let focodexTransfer = null;
 let focodexTarget = DEFAULT_TARGET;
 const FOCODEX_TARGET_KEY = "focodexTarget";
 const FOCODEX_TRANSFER_KEY = "focodexTransfer";
+const FX_OSK_TARGET_KEY = "fxOskTarget";
+let fxOskTarget = DEFAULT_FX_OSK_TARGET;
+let fxOskFrame = null;
+let fxOskFrameOrigin = null;
+let fxOskRequest = null;
 let port = null;
 let libraryReady = false;
 let hostState = "connecting";
@@ -142,6 +149,7 @@ function renderBlocks() {
 
 function phraseBlock(item) {
   const block = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
+    if (blockInteractionMode !== "select") return;
     if (selectedHistoryIds.has(item.id)) {
       selectedHistoryIds.delete(item.id);
       openHistoryMenuId = [...selectedHistoryIds].at(-1) ?? null;
@@ -156,6 +164,11 @@ function phraseBlock(item) {
   block.setAttribute("aria-pressed", String(selectedHistoryIds.has(item.id)));
   block.setAttribute("aria-expanded", String(openHistoryMenuId === item.id));
   if (selectedHistoryIds.has(item.id)) block.classList.add("is-selected");
+  if (blockInteractionMode === "reorder") {
+    block.classList.add("external-card");
+    block.setAttribute("aria-label", `${item.text}。ブロック枠へドラッグして追加`);
+    block.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "history", item.id));
+  }
   return block;
 }
 
@@ -181,7 +194,9 @@ function renderHistory() {
     if (!existingIds.has(id)) selectedHistoryIds.delete(id);
   }
   const selected = editorState.history.filter((h) => selectedHistoryIds.has(h.id));
-  selectedHistoryNode.textContent = selected.length === 0
+  selectedHistoryNode.textContent = blockInteractionMode === "reorder"
+    ? "並べ替え・追加モードです。履歴・定型・記号をブロック枠へドラッグして追加できます。"
+    : selected.length === 0
     ? "語句をタップして選択。複数選択するとまとめてピン留め・削除できます。"
     : selected.length === 1
       ? `選択中: ${selected[0].text}（再タップで解除）`
@@ -229,12 +244,40 @@ function renderTemplates() {
   const group = document.createElement("div");
   group.className = "history-group normal";
   for (const item of editorState.templates) {
-    const card = document.createElement("span");
+    const card = document.createElement("button");
+    card.type = "button";
     card.className = "history-block";
     card.textContent = item.text;
+    card.disabled = !editable();
+    if (blockInteractionMode === "reorder") {
+      card.classList.add("external-card");
+      card.setAttribute("aria-label", `${item.text}。ブロック枠へドラッグして追加`);
+      card.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "template", item.id));
+    } else {
+      card.setAttribute("aria-label", `${item.text}。並べ替え・追加モードでドラッグして追加`);
+    }
     group.append(card);
   }
   fixedItemsNode.append(group);
+}
+
+function renderSymbols() {
+  symbolItemsNode.replaceChildren();
+  for (const symbol of FIXED_SYMBOLS) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "history-block";
+    card.textContent = symbol;
+    card.disabled = !editable();
+    if (blockInteractionMode === "reorder") {
+      card.classList.add("external-card");
+      card.setAttribute("aria-label", `${symbol}。ブロック枠へドラッグして追加`);
+      card.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "symbol", symbol));
+    } else {
+      card.setAttribute("aria-label", `${symbol}。並べ替え・追加モードでドラッグして追加`);
+    }
+    symbolItemsNode.append(card);
+  }
 }
 
 function render() {
@@ -242,6 +285,7 @@ function render() {
   renderBlocks();
   renderHistory();
   renderTemplates();
+  renderSymbols();
   const preview = joinedText(editorState);
   previewNode.textContent = preview;
   manualTextNode.disabled = !editable();
@@ -252,19 +296,19 @@ function render() {
   $("check-focodex").disabled = !focodexTransfer || sendingFocodex;
   $("clear-document").disabled = !editable() || editorState.document.blocks.length === 0;
   const modeButton = $("toggle-reorder");
-  modeButton.disabled = !editable() || editorState.document.blocks.length < 2;
-  modeButton.textContent = blockInteractionMode === "reorder" ? "並べ替えを完了" : "並べ替え";
+  modeButton.disabled = !editable();
+  modeButton.textContent = blockInteractionMode === "reorder" ? "並べ替え・追加を完了" : "並べ替え・追加";
   modeButton.setAttribute("aria-pressed", String(blockInteractionMode === "reorder"));
   for (const action of blockMenu.querySelectorAll("button")) action.disabled = !editable();
 }
 
 function setSideTab(tab) {
-  const showingHistory = tab === "history";
-  $("history-tab").setAttribute("aria-selected", String(showingHistory));
-  $("fixed-tab").setAttribute("aria-selected", String(!showingHistory));
-  $("history-view").hidden = !showingHistory;
-  $("fixed-view").hidden = showingHistory;
-  if (!showingHistory) resetHistorySelection();
+  for (const name of ["history", "fixed", "symbol"]) {
+    const selected = name === tab;
+    $(`${name}-tab`).setAttribute("aria-selected", String(selected));
+    $(`${name}-view`).hidden = !selected;
+  }
+  if (tab !== "history") resetHistorySelection();
 }
 
 function addManualBlock() {
@@ -288,6 +332,60 @@ function addManualTemplate() {
     manualTextNode.focus();
   } catch (error) {
     showError(error.message);
+  }
+}
+
+function dispatchManualInput() {
+  manualTextNode.dispatchEvent(new Event("input", {bubbles: true}));
+}
+
+function applyFxOskKey(key) {
+  if (!editable() || !supportedKey(key)) return;
+  const input = manualTextNode;
+  input.focus({preventScroll: true});
+  if (key === "Enter") {
+    addManualBlock();
+    return;
+  }
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  if (key === "Backspace" || key === "Delete") {
+    const deleteStart = key === "Backspace" && start === end ? Math.max(0, start - 1) : start;
+    const deleteEnd = key === "Delete" && start === end ? Math.min(input.value.length, end + 1) : end;
+    input.setRangeText("", deleteStart, deleteEnd, "start");
+  } else if (key === "ArrowLeft" || key === "ArrowRight") {
+    const position = key === "ArrowLeft"
+      ? (start < end ? start : Math.max(0, start - 1))
+      : (start < end ? end : Math.min(input.value.length, end + 1));
+    input.setSelectionRange(position, position);
+  } else {
+    input.setRangeText(key, start, end, "end");
+  }
+  dispatchManualInput();
+}
+
+async function showFxOsk() {
+  if (!validExtensionId(fxOskTarget) || fxOskRequest) return;
+  if (fxOskFrame) {
+    fxOskFrame.contentWindow?.postMessage({type: "fxosk.show", version: 1}, fxOskFrameOrigin);
+    return;
+  }
+  fxOskRequest = browser.runtime.sendMessage(fxOskTarget, {type: "fxosk.frame.request", version: 1});
+  try {
+    const frameUrl = frameUrlFromReply(await fxOskRequest);
+    if (!fxOskFrame || fxOskFrame.src !== frameUrl.href) {
+      fxOskFrame?.remove();
+      fxOskFrame = document.createElement("iframe");
+      fxOskFrame.id = "fx-osk-frame";
+      fxOskFrame.title = "FX-OSK 仮想キーボード";
+      fxOskFrame.src = frameUrl.href;
+      document.body.append(fxOskFrame);
+      fxOskFrameOrigin = `${frameUrl.protocol}//${frameUrl.host}`;
+    }
+  } catch (error) {
+    showError(`FX-OSKを表示できません: ${error.message}`);
+  } finally {
+    fxOskRequest = null;
   }
 }
 
@@ -411,8 +509,29 @@ function onBlockPointerDown(event, blockId) {
   event.preventDefault();
   const card = event.currentTarget;
   blocksNode.setPointerCapture(event.pointerId);
-  dragState = { pointerId: event.pointerId, card, blockId,
+  dragState = { kind: "document", pointerId: event.pointerId, card, blockId,
     x: event.clientX, y: event.clientY, dragged: false };
+}
+
+function onExternalPointerDown(event, kind, source) {
+  if (!editable() || blockInteractionMode !== "reorder" || !event.isPrimary || dragState || (event.pointerType === "mouse" && event.button !== 0)) return;
+  event.preventDefault();
+  const card = event.currentTarget;
+  blocksNode.setPointerCapture(event.pointerId);
+  dragState = { kind, source, pointerId: event.pointerId, card,
+    x: event.clientX, y: event.clientY, dragged: false, marker: null };
+}
+
+function findDropTarget(event, draggedCard) {
+  const target = [...blocksNode.children].find((card) => {
+    if (card === draggedCard || card.classList.contains("symbol-drop-marker")) return false;
+    const rect = card.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  });
+  if (!target) return null;
+  const rect = target.getBoundingClientRect();
+  return {target, after: event.clientY > rect.bottom || (event.clientY >= rect.top && event.clientX > rect.left + rect.width / 2)};
 }
 
 function onBlockPointerMove(event) {
@@ -426,16 +545,25 @@ function onBlockPointerMove(event) {
     document.body.classList.add("is-dragging");
   }
   event.preventDefault();
-  const target = [...blocksNode.children].find((card) => {
-    if (card === drag.card) return false;
-    const rect = card.getBoundingClientRect();
-    return event.clientX >= rect.left && event.clientX <= rect.right
-      && event.clientY >= rect.top && event.clientY <= rect.bottom;
-  });
-  if (!target) return;
-  const rect = target.getBoundingClientRect();
-  const after = event.clientY > rect.bottom || (event.clientY >= rect.top && event.clientX > rect.left + rect.width / 2);
-  blocksNode.insertBefore(drag.card, after ? target.nextSibling : target);
+  const insertion = findDropTarget(event, drag.kind === "document" ? drag.card : null);
+  if (drag.kind === "document") {
+    if (insertion) blocksNode.insertBefore(drag.card, insertion.after ? insertion.target.nextSibling : insertion.target);
+    return;
+  }
+  if (!drag.marker) {
+    drag.marker = document.createElement("div");
+    drag.marker.className = "symbol-drop-marker";
+  }
+  if (insertion) {
+    blocksNode.insertBefore(drag.marker, insertion.after ? insertion.target.nextSibling : insertion.target);
+    return;
+  }
+  const rect = blocksNode.getBoundingClientRect();
+  if (event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+    blocksNode.append(drag.marker);
+  } else {
+    drag.marker.remove();
+  }
 }
 
 function endBlockPointer(event, cancelled) {
@@ -446,7 +574,17 @@ function endBlockPointer(event, cancelled) {
   drag.card.classList.remove("is-dragging");
   document.body.classList.remove("is-dragging");
   if (cancelled) {
+    drag.marker?.remove();
     if (drag.dragged) renderBlocks();
+  } else if (drag.dragged && drag.kind !== "document") {
+    const index = drag.marker?.parentElement === blocksNode ? [...blocksNode.children].indexOf(drag.marker) : -1;
+    drag.marker?.remove();
+    if (index >= 0) {
+      const source = drag.source;
+      if (drag.kind === "history") mutate((state) => insertFromHistory(state, source, index, newId(), now()));
+      if (drag.kind === "template") mutate((state) => insertFromTemplate(state, source, index, newId(), newId(), now()));
+      if (drag.kind === "symbol") mutate((state) => insertSymbolBlock(state, source, index, newId()));
+    }
   } else if (drag.dragged) {
     drag.card.dataset.ignoreClick = "true";
     const order = [...blocksNode.children].map((card) => card.dataset.blockId);
@@ -778,6 +916,7 @@ $("clear-history-selection").addEventListener("click", () => {
 });
 $("history-tab").addEventListener("click", () => setSideTab("history"));
 $("fixed-tab").addEventListener("click", () => setSideTab("fixed"));
+$("symbol-tab").addEventListener("click", () => setSideTab("symbol"));
 $("add-manual-block").addEventListener("click", addManualBlock);
 $("add-template").addEventListener("click", addManualTemplate);
 manualTextNode.addEventListener("keydown", (event) => {
@@ -785,6 +924,12 @@ manualTextNode.addEventListener("keydown", (event) => {
     event.preventDefault();
     addManualBlock();
   }
+});
+manualTextNode.addEventListener("focus", showFxOsk);
+window.addEventListener("message", (event) => {
+  if (!fxOskFrame || event.source !== fxOskFrame.contentWindow || event.origin !== fxOskFrameOrigin) return;
+  if (event.data?.type !== "fxosk.key" || event.data.version !== 1) return;
+  applyFxOskKey(event.data.key);
 });
 $("delete-block").addEventListener("click", () => {
   if (!editable() || selectedBlockIds.size === 0) return;
@@ -847,14 +992,22 @@ $("copy").addEventListener("click", async () => {
     showError(`コピーに失敗しました: ${error.message}`);
   }
 });
-$("save-focodex-target").addEventListener("click", async () => {
+$("save-extension-targets").addEventListener("click", async () => {
   const target = $("focodex-target").value.trim();
-  if (!target || target.length > 256) { $("focodex-status").textContent = "送信先の拡張IDを確認してください。"; return; }
+  const oskTarget = $("fx-osk-target").value.trim();
+  if (!target || target.length > 256 || !validExtensionId(oskTarget)) {
+    $("focodex-status").textContent = "FocodexとFX-OSKの拡張IDを確認してください。";
+    return;
+  }
   try {
-    await browser.storage.local.set({[FOCODEX_TARGET_KEY]: target});
+    await browser.storage.local.set({[FOCODEX_TARGET_KEY]: target, [FX_OSK_TARGET_KEY]: oskTarget});
     focodexTarget = target;
-    $("focodex-status").textContent = "送信先を保存しました。既に送った文章の結果照会先は変わりません。";
-  } catch { $("focodex-status").textContent = "送信先を保存できません。"; }
+    fxOskTarget = oskTarget;
+    fxOskFrame?.remove();
+    fxOskFrame = null;
+    fxOskFrameOrigin = null;
+    $("focodex-status").textContent = "連携先を保存しました。既に送った文章の結果照会先は変わりません。";
+  } catch { $("focodex-status").textContent = "連携先を保存できません。"; }
 });
 async function transferToFocodex(checkOnly = false) {
   if (sendingFocodex || (!checkOnly && !editable())) return;
@@ -883,9 +1036,11 @@ window.addEventListener("pagehide", () => port?.disconnect());
 
 async function initialize() {
   try {
-    const saved = await browser.storage.local.get([STORAGE_KEY, ENGINE_STORAGE_KEY, FOCODEX_TARGET_KEY, FOCODEX_TRANSFER_KEY]);
+    const saved = await browser.storage.local.get([STORAGE_KEY, ENGINE_STORAGE_KEY, FOCODEX_TARGET_KEY, FOCODEX_TRANSFER_KEY, FX_OSK_TARGET_KEY]);
     focodexTarget = typeof saved[FOCODEX_TARGET_KEY] === "string" && saved[FOCODEX_TARGET_KEY].trim() ? saved[FOCODEX_TARGET_KEY] : DEFAULT_TARGET;
     $("focodex-target").value = focodexTarget;
+    fxOskTarget = validExtensionId(saved[FX_OSK_TARGET_KEY]) ? saved[FX_OSK_TARGET_KEY] : DEFAULT_FX_OSK_TARGET;
+    $("fx-osk-target").value = fxOskTarget;
     const transfer = saved[FOCODEX_TRANSFER_KEY];
     if (typeof transfer?.target === "string" && typeof transfer?.requestId === "string") {
       focodexTransfer = transfer;

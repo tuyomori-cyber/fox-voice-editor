@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, deleteBlock, deleteBlocks,
+  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
   moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
@@ -60,6 +60,21 @@ test("manual template entry is stored separately and also added to history", () 
   state = addTemplate(state, "確認してください", "template-2", "history-template-2", time);
   assert.equal(state.templates.length, 1);
   assert.equal(state.templates[0].useCount, 2);
+});
+
+test("template and fixed-symbol drags insert distinct document blocks", () => {
+  let state = voice(initialState(), "前", 0, "before");
+  state = addTemplate(state, "定型句", "template-1", "template-history-1", time);
+  state = insertFromTemplate(state, "template-1", 1, "template-block", "template-history-2", time);
+  state = insertSymbolBlock(state, "、", 2, "symbol-block");
+  state = insertSymbolBlock(state, "？", 3, "fullwidth-symbol-block");
+  state = insertSymbolBlock(state, "\\", 4, "halfwidth-symbol-block");
+  assert.deepEqual(state.document.blocks.map((block) => [block.text, block.origin]), [
+    ["前", "voice"], ["定型句", "template"], ["、", "symbol"], ["？", "symbol"], ["\\", "symbol"]
+  ]);
+  assert.equal(state.templates[0].useCount, 2);
+  assert.ok(state.history.some((item) => item.text === "定型句"));
+  assert.throws(() => insertSymbolBlock(state, "あ", 0, "invalid"));
 });
 
 
