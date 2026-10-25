@@ -364,9 +364,16 @@ function applyFxOskKey(key) {
   dispatchManualInput();
 }
 
+function setFxOskFrameVisible(open) {
+  if (!fxOskFrame) return;
+  fxOskFrame.hidden = !open;
+  fxOskFrame.style.pointerEvents = open ? "auto" : "none";
+}
+
 async function showFxOsk() {
   if (!validExtensionId(fxOskTarget) || fxOskRequest) return;
   if (fxOskFrame) {
+    setFxOskFrameVisible(true);
     fxOskFrame.contentWindow?.postMessage({type: "fxosk.show", version: 1}, fxOskFrameOrigin);
     return;
   }
@@ -813,6 +820,7 @@ function handleMessage(message) {
 }
 
 function connect() {
+  if (port) return;
   microphoneReady = false;
   libraryReady = false;
   engineStatus = "uninitialized";
@@ -820,9 +828,11 @@ function connect() {
   engineInitializationMs = null;
   setHostState("connecting");
   try {
-    port = browser.runtime.connectNative(HOST_NAME);
-    port.onMessage.addListener(handleMessage);
-    port.onDisconnect.addListener(() => {
+    const connectedPort = browser.runtime.connectNative(HOST_NAME);
+    port = connectedPort;
+    connectedPort.onMessage.addListener(handleMessage);
+    connectedPort.onDisconnect.addListener(() => {
+      if (port !== connectedPort) return;
       showError(browser.runtime.lastError?.message || "Native Hostとの接続が切れました。");
       port = null;
       libraryReady = false;
@@ -928,8 +938,12 @@ manualTextNode.addEventListener("keydown", (event) => {
 manualTextNode.addEventListener("focus", showFxOsk);
 window.addEventListener("message", (event) => {
   if (!fxOskFrame || event.source !== fxOskFrame.contentWindow || event.origin !== fxOskFrameOrigin) return;
-  if (event.data?.type !== "fxosk.key" || event.data.version !== 1) return;
-  applyFxOskKey(event.data.key);
+  if (event.data?.version !== 1) return;
+  if (event.data.type === "fxosk.visibility" && typeof event.data.open === "boolean") {
+    setFxOskFrameVisible(event.data.open);
+    return;
+  }
+  if (event.data.type === "fxosk.key") applyFxOskKey(event.data.key);
 });
 $("delete-block").addEventListener("click", () => {
   if (!editable() || selectedBlockIds.size === 0) return;
@@ -1032,7 +1046,12 @@ async function transferToFocodex(checkOnly = false) {
 }
 $("send-focodex").addEventListener("click", () => transferToFocodex());
 $("check-focodex").addEventListener("click", () => transferToFocodex(true));
-window.addEventListener("pagehide", () => port?.disconnect());
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  window.setTimeout(() => {
+    if (editorState !== null && !port) connect();
+  }, 0);
+});
 
 async function initialize() {
   try {

@@ -110,3 +110,4 @@ body.is-dragging { user-select: none; }
 #focodex-target, #fx-osk-target { max-width: 100%; width: 26rem; min-height: 2.75rem; font: inherit; margin: .5rem 0; }
 #focodex-status { overflow-wrap: anywhere; }
 #fx-osk-frame { position: fixed; z-index: 30; left: 50%; bottom: 0; width: min(100vw, 70rem); height: min(22rem, 48vh); border: 0; transform: translateX(-50%); background: transparent; }
+#fx-osk-frame[hidden] { display: none; pointer-events: none; }
