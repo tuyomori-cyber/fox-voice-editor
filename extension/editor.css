@@ -30,6 +30,7 @@ header h1 { font-size: 1.35rem; margin: 0 0 1rem; }
 .controls { justify-content: flex-start; }
 button { min-height: 2.75rem; padding: .45rem .8rem; font-size: 1rem; cursor: pointer; }
 button:disabled { cursor: default; }
+#toggle-reorder[aria-pressed="true"]:not(:disabled) { background: #111; border-color: #111; color: #fff; }
 .controls button { min-width: 8.5rem; min-height: 3.25rem; }
 .internal-status { position: fixed; z-index: 20; max-width: min(34rem, calc(100vw - 1rem)); padding: .75rem; border: 2px solid var(--menu-border); border-radius: .75rem; background: var(--menu-background); color: var(--menu-text); box-shadow: 0 .7rem 1.5rem #0006, 0 .15rem .4rem #0004; }
 .internal-status[hidden] { display: none; }

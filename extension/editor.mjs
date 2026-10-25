@@ -370,6 +370,10 @@ function setFxOskFrameVisible(open) {
   fxOskFrame.style.pointerEvents = open ? "auto" : "none";
 }
 
+function centerManualEntry() {
+  manualTextNode.scrollIntoView({block: "center", inline: "nearest", behavior: "smooth"});
+}
+
 async function showFxOsk() {
   if (!validExtensionId(fxOskTarget) || fxOskRequest) return;
   if (fxOskFrame) {
@@ -935,7 +939,10 @@ manualTextNode.addEventListener("keydown", (event) => {
     addManualBlock();
   }
 });
-manualTextNode.addEventListener("focus", showFxOsk);
+manualTextNode.addEventListener("focus", () => {
+  centerManualEntry();
+  showFxOsk();
+});
 window.addEventListener("message", (event) => {
   if (!fxOskFrame || event.source !== fxOskFrame.contentWindow || event.origin !== fxOskFrameOrigin) return;
   if (event.data?.version !== 1) return;
