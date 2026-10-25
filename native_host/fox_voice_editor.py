@@ -17,7 +17,7 @@ import time
 import uuid
 
 HOST_NAME = "fox_voice_editor"
-MAX_MESSAGE_BYTES = 65536
+MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_RECORD_SECONDS = 30
 WHISPER_TIMEOUT_SECONDS = 60
 CONVERT_TIMEOUT_SECONDS = 10
@@ -36,6 +36,69 @@ MICROPHONE_CONFIG = Path.home() / ".config/fox-voice-editor/microphone.json"
 MICROPHONE_CARD = "PCH"
 MICROPHONE_CONTROL = "Internal Mic Boost"
 AMIXER_TIMEOUT_SECONDS = 2
+LIBRARY_PATH = Path.home() / ".local/share/fox-voice-editor/library-v1.json"
+LIBRARY_SCHEMA_VERSION = 1
+LIBRARY_ITEM_LIMIT = 500
+LIBRARY_TEXT_LIMIT = 4096
+
+
+def empty_library() -> dict:
+    return {"schemaVersion": LIBRARY_SCHEMA_VERSION, "history": [], "templates": []}
+
+
+def validate_library(value: object) -> dict:
+    if not isinstance(value, dict) or set(value) != {"schemaVersion", "history", "templates"} or value["schemaVersion"] != LIBRARY_SCHEMA_VERSION:
+        raise ValueError("定型・履歴データの形式が正しくありません。")
+    normalized: dict[str, object] = {"schemaVersion": LIBRARY_SCHEMA_VERSION}
+    for collection in ("history", "templates"):
+        entries = value[collection]
+        if not isinstance(entries, list) or len(entries) > LIBRARY_ITEM_LIMIT:
+            raise ValueError("定型・履歴データの件数が正しくありません。")
+        ids: set[str] = set()
+        checked = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"id", "text", "pinned", "lastUsedAt", "useCount"}:
+                raise ValueError("定型・履歴の項目形式が正しくありません。")
+            entry_id, text = entry["id"], entry["text"]
+            if not isinstance(entry_id, str) or not entry_id or len(entry_id) > 128 or entry_id in ids:
+                raise ValueError("定型・履歴のIDが正しくありません。")
+            if not isinstance(text, str) or not text or len(text) > LIBRARY_TEXT_LIMIT:
+                raise ValueError("定型・履歴の文字列が正しくありません。")
+            if type(entry["pinned"]) is not bool or (entry["lastUsedAt"] is not None and not isinstance(entry["lastUsedAt"], str)) or type(entry["useCount"]) is not int or entry["useCount"] < 0:
+                raise ValueError("定型・履歴の項目値が正しくありません。")
+            ids.add(entry_id)
+            checked.append({key: entry[key] for key in ("id", "text", "pinned", "lastUsedAt", "useCount")})
+        normalized[collection] = checked
+    return normalized
+
+
+def load_library() -> tuple[dict, bool]:
+    try:
+        raw = json.loads(LIBRARY_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return empty_library(), False
+    return validate_library(raw), True
+
+
+def save_library(value: object) -> None:
+    library = validate_library(value)
+    LIBRARY_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=LIBRARY_PATH.parent, prefix=".library-", delete=False) as stream:
+        json.dump(library, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+        staged = Path(stream.name)
+    try:
+        staged.chmod(0o600)
+        os.replace(staged, LIBRARY_PATH)
+        directory_fd = os.open(LIBRARY_PATH.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def boost_fix_enabled() -> bool:
@@ -292,12 +355,30 @@ class Session:
         send({"event": "error", "recordingId": recording_id, "code": code, "message": message})
 
     def handle(self, request: object) -> None:
-        if not isinstance(request, dict) or "action" not in request or not isinstance(request["action"], str) or (
-            set(request) != ({"action", "engine"} if request["action"] == "prepare_engine" else {"action"})
-        ):
+        if not isinstance(request, dict) or "action" not in request or not isinstance(request["action"], str):
             send({"event": "error", "recordingId": None, "code": "INVALID_REQUEST", "message": "要求形式が正しくありません。"})
             return
         action = request["action"]
+        expected_keys = {"action", "engine"} if action == "prepare_engine" else {"action", "library"} if action == "save_library" else {"action"}
+        if set(request) != expected_keys:
+            send({"event": "error", "recordingId": None, "code": "INVALID_REQUEST", "message": "要求形式が正しくありません。"})
+            return
+        if action == "load_library":
+            try:
+                library, exists = load_library()
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                send({"event": "library_error", "code": "LIBRARY_LOAD_FAILED", "message": str(exc)})
+            else:
+                send({"event": "library_loaded", "library": library, "exists": exists})
+            return
+        if action == "save_library":
+            try:
+                save_library(request["library"])
+            except (OSError, ValueError) as exc:
+                send({"event": "library_error", "code": "LIBRARY_SAVE_FAILED", "message": str(exc)})
+            else:
+                send({"event": "library_saved"})
+            return
         if action == "prepare_engine":
             self._prepare_engine(request["engine"])
         elif action == "prepare_microphone":

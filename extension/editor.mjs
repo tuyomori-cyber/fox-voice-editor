@@ -1,6 +1,6 @@
 import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-send.mjs";
 import {
-  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlocks, moveBlock, reorderBlocks,
+  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, deleteBlocks, moveBlock, reorderBlocks,
   setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
@@ -13,13 +13,17 @@ const microphoneStatusNode = $("microphone-status");
 const engineStatusNode = $("engine-status");
 const errorNode = $("error");
 const timerNode = $("timer");
+const internalStatusNode = $("internal-status");
+const internalStatusToggle = $("internal-status-toggle");
 const blocksNode = $("blocks");
 const blockMenu = $("block-menu");
 const historyItemsNode = $("history-items");
+const fixedItemsNode = $("fixed-items");
 const historyMenu = $("history-menu");
 const selectedHistoryNode = $("selected-history");
 const previewNode = $("preview");
 const saveStatusNode = $("save-status");
+const manualTextNode = $("manual-text");
 
 let sendingFocodex = false;
 let focodexTransfer = null;
@@ -27,6 +31,7 @@ let focodexTarget = DEFAULT_TARGET;
 const FOCODEX_TARGET_KEY = "focodexTarget";
 const FOCODEX_TRANSFER_KEY = "focodexTransfer";
 let port = null;
+let libraryReady = false;
 let hostState = "connecting";
 let microphoneReady = false;
 let selectedEngine = "whisper";
@@ -52,7 +57,7 @@ let dragState = null;
 let blockInteractionMode = "select";
 
 const busyStates = new Set(["preparing", "starting", "recording", "stopping", "converting", "recognizing", "cancelling", "syncing"]);
-const editable = () => editorState !== null && !busyStates.has(hostState);
+const editable = () => editorState !== null && libraryReady && !busyStates.has(hostState);
 const newId = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 
@@ -67,6 +72,30 @@ function button(label, onClick, disabled = false) {
 
 function showError(message) {
   errorNode.textContent = message;
+}
+
+function libraryFromState(state) {
+  return {schemaVersion: 1, history: state.history, templates: state.templates};
+}
+
+function saveLibraryState(state) {
+  if (libraryReady) post("save_library", false, {library: libraryFromState(state)});
+}
+
+function positionInternalStatus() {
+  if (internalStatusNode.hidden) return;
+  const rect = internalStatusToggle.getBoundingClientRect();
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - internalStatusNode.offsetWidth - 8));
+  const below = rect.bottom + 8;
+  internalStatusNode.style.left = `${left}px`;
+  internalStatusNode.style.top = `${below + internalStatusNode.offsetHeight > window.innerHeight
+    ? Math.max(8, rect.top - internalStatusNode.offsetHeight - 8) : below}px`;
+}
+
+function setInternalStatusOpen(open) {
+  internalStatusNode.hidden = !open;
+  internalStatusToggle.setAttribute("aria-expanded", String(open));
+  if (open) positionInternalStatus();
 }
 
 function renderBlocks() {
@@ -189,12 +218,35 @@ function renderHistory() {
   $("clear-history").disabled = !editable() || editorState.history.length === 0;
 }
 
+function renderTemplates() {
+  fixedItemsNode.replaceChildren();
+  if (editorState.templates.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "定型はありません。";
+    fixedItemsNode.append(empty);
+    return;
+  }
+  const group = document.createElement("div");
+  group.className = "history-group normal";
+  for (const item of editorState.templates) {
+    const card = document.createElement("span");
+    card.className = "history-block";
+    card.textContent = item.text;
+    group.append(card);
+  }
+  fixedItemsNode.append(group);
+}
+
 function render() {
   if (editorState === null) return;
   renderBlocks();
   renderHistory();
+  renderTemplates();
   const preview = joinedText(editorState);
   previewNode.textContent = preview;
+  manualTextNode.disabled = !editable();
+  $("add-manual-block").disabled = !editable();
+  $("add-template").disabled = !editable();
   $("copy").disabled = !editable() || !preview;
   $("send-focodex").disabled = !editable() || !preview || sendingFocodex;
   $("check-focodex").disabled = !focodexTransfer || sendingFocodex;
@@ -204,6 +256,39 @@ function render() {
   modeButton.textContent = blockInteractionMode === "reorder" ? "並べ替えを完了" : "並べ替え";
   modeButton.setAttribute("aria-pressed", String(blockInteractionMode === "reorder"));
   for (const action of blockMenu.querySelectorAll("button")) action.disabled = !editable();
+}
+
+function setSideTab(tab) {
+  const showingHistory = tab === "history";
+  $("history-tab").setAttribute("aria-selected", String(showingHistory));
+  $("fixed-tab").setAttribute("aria-selected", String(!showingHistory));
+  $("history-view").hidden = !showingHistory;
+  $("fixed-view").hidden = showingHistory;
+  if (!showingHistory) resetHistorySelection();
+}
+
+function addManualBlock() {
+  if (!editable()) return;
+  try {
+    commit(appendManualBlock(editorState, manualTextNode.value, newId(), newId(), now()));
+    manualTextNode.value = "";
+    showError("");
+    manualTextNode.focus();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function addManualTemplate() {
+  if (!editable()) return;
+  try {
+    commit(addTemplate(editorState, manualTextNode.value, newId(), newId(), now()));
+    manualTextNode.value = "";
+    showError("");
+    manualTextNode.focus();
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 function renderEngine() {
@@ -237,9 +322,11 @@ function persist(snapshot) {
 
 function commit(next) {
   if (next === editorState) return;
+  const libraryChanged = next.history !== editorState.history || next.templates !== editorState.templates;
   editorState = next;
   render();
   persist(next);
+  if (libraryChanged) saveLibraryState(next);
 }
 
 function mutate(change) {
@@ -389,7 +476,7 @@ function setHostState(nextState) {
   statusNode.textContent = labels[nextState] || nextState;
   const toggle = $("record-toggle");
   toggle.textContent = nextState === "recording" || nextState === "stopping" ? "録音停止" : "録音開始";
-  toggle.disabled = editorState === null || (nextState === "idle" && (!microphoneReady || engineStatus !== "ready")) || !["idle", "recording"].includes(nextState);
+  toggle.disabled = editorState === null || !libraryReady || (nextState === "idle" && (!microphoneReady || engineStatus !== "ready")) || !["idle", "recording"].includes(nextState);
   $("cancel").disabled = !["recording", "stopping", "converting", "recognizing"].includes(nextState);
   $("check-microphone").disabled = nextState !== "idle" || !port;
   renderEngine();
@@ -412,6 +499,10 @@ function post(action, clearError = true, extra = {}) {
 
 function beginRecording() {
   if (hostState !== "idle" || editorState === null) return;
+  if (!libraryReady) {
+    showError("定型・履歴を読み込んでいます。完了するまでお待ちください。");
+    return;
+  }
   if (!microphoneReady) {
     showError("録音の前にマイクを再確認してください。");
     return;
@@ -442,6 +533,28 @@ function finishRecording() {
 }
 
 function handleMessage(message) {
+  if (message.event === "library_loaded") {
+    try {
+      const libraryState = restoreState({schemaVersion: 1, document: {blocks: []}, history: message.library?.history, templates: message.library?.templates});
+      editorState = {...editorState, history: libraryState.history, templates: libraryState.templates};
+      libraryReady = true;
+      render();
+      persist(editorState);
+      if (!message.exists) saveLibraryState(editorState);
+    } catch (error) {
+      libraryReady = false;
+      showError(`定型・履歴データを読み取れません: ${error.message}`);
+      render();
+    }
+    return;
+  }
+  if (message.event === "library_saved") return;
+  if (message.event === "library_error") {
+    libraryReady = false;
+    showError(`定型・履歴を保存できません: ${message.message || message.code}`);
+    render();
+    return;
+  }
   if (message.event === "engine_prepared") {
     if (message.engine !== selectedEngine) return;
     engineStatus = message.engineStatus;
@@ -563,6 +676,7 @@ function handleMessage(message) {
 
 function connect() {
   microphoneReady = false;
+  libraryReady = false;
   engineStatus = "uninitialized";
   engineGeneration = null;
   engineInitializationMs = null;
@@ -573,6 +687,7 @@ function connect() {
     port.onDisconnect.addListener(() => {
       showError(browser.runtime.lastError?.message || "Native Hostとの接続が切れました。");
       port = null;
+      libraryReady = false;
       microphoneReady = false;
       engineStatus = "uninitialized";
       engineGeneration = null;
@@ -582,6 +697,7 @@ function connect() {
       setHostState("disconnected");
     });
     setHostState("preparing");
+    post("load_library", false);
     post("prepare_microphone");
     post("prepare_engine", false, {engine: selectedEngine});
   } catch (error) {
@@ -660,6 +776,16 @@ $("clear-history-selection").addEventListener("click", () => {
   resetHistorySelection();
   renderHistory();
 });
+$("history-tab").addEventListener("click", () => setSideTab("history"));
+$("fixed-tab").addEventListener("click", () => setSideTab("fixed"));
+$("add-manual-block").addEventListener("click", addManualBlock);
+$("add-template").addEventListener("click", addManualTemplate);
+manualTextNode.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addManualBlock();
+  }
+});
 $("delete-block").addEventListener("click", () => {
   if (!editable() || selectedBlockIds.size === 0) return;
   const ids = new Set(selectedBlockIds);
@@ -685,8 +811,22 @@ $("load-more").addEventListener("click", () => {
 });
 window.addEventListener("scroll", positionHistoryMenu, true);
 window.addEventListener("scroll", positionBlockMenu, true);
+window.addEventListener("scroll", positionInternalStatus, true);
 window.addEventListener("resize", positionHistoryMenu);
 window.addEventListener("resize", positionBlockMenu);
+window.addEventListener("resize", positionInternalStatus);
+internalStatusToggle.addEventListener("click", () => setInternalStatusOpen(internalStatusNode.hidden));
+window.addEventListener("pointerdown", (event) => {
+  if (!internalStatusNode.hidden && !internalStatusNode.contains(event.target) && event.target !== internalStatusToggle) {
+    setInternalStatusOpen(false);
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !internalStatusNode.hidden) {
+    setInternalStatusOpen(false);
+    internalStatusToggle.focus();
+  }
+});
 $("clear-document").addEventListener("click", () => {
   if (confirm("現在の文書をすべて消去しますか？")) {
     clearBlockSelection();

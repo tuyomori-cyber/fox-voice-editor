@@ -52,6 +52,7 @@ Path(sys.argv[sys.argv.index('-of') + 1] + '.txt').write_text('テスト成功\\
         model = root / "model.bin"
         model.write_bytes(b"fake model")
         self.microphone_config = root / "microphone.json"
+        self.library_path = root / "library-v1.json"
         self.amixer_state = root / "amixer-state.json"
         self.amixer_state.write_text(json.dumps({"left": 3, "right": 3, "mode": "normal", "calls": []}))
         amixer = root / "amixer.py"
@@ -85,11 +86,12 @@ host.WHISPER_CLI = Path(sys.argv[4])
 host.MODEL = Path(sys.argv[5])
 host.AMIXER = Path(sys.argv[6])
 host.MICROPHONE_CONFIG = Path(sys.argv[7])
+host.LIBRARY_PATH = Path(sys.argv[8])
 sys.exit(host.main())
 """
         env = dict(os.environ, TEST_RECORDER_PID=str(self.pid_file), TEST_AMIXER_STATE=str(self.amixer_state))
         self.host = subprocess.Popen(
-            [sys.executable, "-u", "-c", bootstrap, str(HOST), str(recorder), str(converter), str(recognizer), str(model), str(amixer), str(self.microphone_config)],
+            [sys.executable, "-u", "-c", bootstrap, str(HOST), str(recorder), str(converter), str(recognizer), str(model), str(amixer), str(self.microphone_config), str(self.library_path)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
         )
         self.addCleanup(self._close_host)
@@ -150,6 +152,26 @@ sys.exit(host.main())
         self.assertEqual(self._read()["code"], "MICROPHONE_NOT_READY")
         self.assertEqual(self._prepare()["status"], "skipped")
         self.assertEqual(json.loads(self.amixer_state.read_text())["calls"], [])
+
+    def test_library_survives_host_reconnect_and_rejects_invalid_payload(self) -> None:
+        self._send("load_library")
+        initial = self._read()
+        self.assertEqual(initial["event"], "library_loaded")
+        self.assertFalse(initial["exists"])
+        library = {
+            "schemaVersion": 1,
+            "history": [{"id": "history-1", "text": "履歴", "pinned": False, "lastUsedAt": None, "useCount": 1}],
+            "templates": [{"id": "template-1", "text": "定型", "pinned": False, "lastUsedAt": None, "useCount": 1}],
+        }
+        self._send_request({"action": "save_library", "library": library})
+        self.assertEqual(self._read()["event"], "library_saved")
+        self.assertEqual(oct(self.library_path.stat().st_mode & 0o777), "0o600")
+        self._send("load_library")
+        restored = self._read()
+        self.assertTrue(restored["exists"])
+        self.assertEqual(restored["library"], library)
+        self._send_request({"action": "save_library", "library": {"schemaVersion": 1, "history": [], "templates": [{"text": "不正"}]}})
+        self.assertEqual(self._read()["code"], "LIBRARY_SAVE_FAILED")
 
     def test_microphone_adjusts_once_and_manual_recheck_finds_zero(self) -> None:
         self.microphone_config.write_text('{"boost_fix": true}')

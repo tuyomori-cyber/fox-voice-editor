@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  initialState, restoreState, applyVoiceResult, insertFromHistory, deleteBlock, deleteBlocks,
+  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, deleteBlock, deleteBlocks,
   moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
@@ -38,6 +38,30 @@ test("history reuse creates independent block and deletion preserves document", 
   state = deleteBlock(state, "b1");
   assert.equal(state.document.blocks[0].id, "b2");
 });
+
+test("manual entry appends an independently editable block and adds it to history", () => {
+  let state = voice(initialState(), "音声", 0, "voice");
+  const historyBefore = state.history;
+  state = appendManualBlock(state, "手入力", "manual", "history-manual", time);
+  assert.deepEqual(state.document.blocks.map((block) => [block.id, block.text, block.origin]), [
+    ["voice", "音声", "voice"], ["manual", "手入力", "manual"]
+  ]);
+  assert.equal(joinedText(state), "音声手入力");
+  assert.notEqual(state.history, historyBefore);
+  assert.ok(state.history.some((item) => item.text === "手入力"));
+  assert.throws(() => appendManualBlock(state, "   ", "empty", "history-empty", time));
+});
+
+test("manual template entry is stored separately and also added to history", () => {
+  let state = initialState();
+  state = addTemplate(state, "確認してください", "template-1", "history-template-1", time);
+  assert.deepEqual(state.templates.map((item) => item.text), ["確認してください"]);
+  assert.ok(state.history.some((item) => item.text === "確認してください"));
+  state = addTemplate(state, "確認してください", "template-2", "history-template-2", time);
+  assert.equal(state.templates.length, 1);
+  assert.equal(state.templates[0].useCount, 2);
+});
+
 
 test("bulk block deletion preserves unselected blocks and history", () => {
   let state = voice(initialState(), "A", 0, "a");
@@ -93,5 +117,8 @@ test("bulk pin and deletion affect only selected history, not document blocks", 
 test("invalid persisted state is rejected without silent reset", () => {
   assert.throws(() => restoreState({ schemaVersion: 2, document: { blocks: [] }, history: [] }));
   assert.throws(() => restoreState({ schemaVersion: 1, document: { blocks: [{ id: "a" }] }, history: [] }));
+  const legacy = initialState();
+  delete legacy.templates;
+  assert.deepEqual(restoreState(legacy).templates, []);
   assert.equal(restoreState(undefined).schemaVersion, 1);
 });

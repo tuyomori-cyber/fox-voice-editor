@@ -5,6 +5,7 @@ export function initialState() {
   return {
     schemaVersion: 1,
     document: { blocks: [] },
+    templates: [],
     history: DEFAULT_PHRASES.map((text, index) => ({
       id: `preset-${index}`, text, pinned: true, lastUsedAt: null, useCount: 0
     }))
@@ -18,15 +19,20 @@ export function restoreState(raw) {
   }
   const blocks = raw.document.blocks;
   const history = raw.history;
+  const templates = raw.templates === undefined ? [] : raw.templates;
   if (blocks.some((b) => typeof b?.id !== "string" || typeof b?.text !== "string") ||
       history.some((h) => typeof h?.id !== "string" || typeof h?.text !== "string" || typeof h?.pinned !== "boolean") ||
+      !Array.isArray(templates) ||
+      templates.some((t) => typeof t?.id !== "string" || typeof t?.text !== "string" || typeof t?.pinned !== "boolean") ||
       new Set(blocks.map((b) => b.id)).size !== blocks.length ||
-      new Set(history.map((h) => h.id)).size !== history.length) {
+      new Set(history.map((h) => h.id)).size !== history.length ||
+      new Set(templates.map((t) => t.id)).size !== templates.length) {
     throw new Error("保存データが不正です。内容は上書きしません。");
   }
   return {
     schemaVersion: 1,
     document: { blocks: blocks.map((b) => ({ ...b })) },
+    templates: templates.map((t) => ({ ...t })),
     history: history.map((h) => ({ ...h }))
   };
 }
@@ -54,6 +60,14 @@ function touchHistory(state, text, now, id) {
   return { ...state, history: trimHistory([updated, ...state.history.filter((h) => h !== existing)]) };
 }
 
+function touchTemplate(state, text, now, id) {
+  const existing = state.templates.find((t) => t.text === text);
+  const updated = existing
+    ? { ...existing, lastUsedAt: now, useCount: (existing.useCount || 0) + 1 }
+    : { id, text, pinned: false, lastUsedAt: now, useCount: 1 };
+  return { ...state, templates: trimHistory([updated, ...state.templates.filter((t) => t !== existing)]) };
+}
+
 function insertBlock(state, index, block) {
   const blocks = [...state.document.blocks];
   if (!Number.isInteger(index) || index < 0 || index > blocks.length) throw new Error("挿入位置が不正です。");
@@ -76,6 +90,18 @@ export function insertFromHistory(state, historyId, index, blockId, now) {
     insertBlock(state, index, { id: blockId, text: item.text, origin: "history" }),
     item.text, now, historyId
   );
+}
+
+export function appendManualBlock(state, text, blockId, historyId, now) {
+  if (!text.trim()) throw new Error("追加する文章を入力してください。");
+  return touchHistory(
+    insertBlock(state, state.document.blocks.length, { id: blockId, text, origin: "manual" }), text, now, historyId
+  );
+}
+
+export function addTemplate(state, text, templateId, historyId, now) {
+  if (!text.trim()) throw new Error("定型へ追加する文章を入力してください。");
+  return touchTemplate(touchHistory(state, text, now, historyId), text, now, templateId);
 }
 
 export function deleteBlock(state, blockId) {
