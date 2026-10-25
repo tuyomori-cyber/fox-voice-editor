@@ -179,6 +179,11 @@ export function deleteHistoryMany(state, historyIds) {
   return { ...state, history: state.history.filter((h) => !ids.has(h.id)) };
 }
 
+export function deleteTemplatesMany(state, templateIds) {
+  const ids = new Set(templateIds);
+  return { ...state, templates: state.templates.filter((template) => !ids.has(template.id)) };
+}
+
 export function clearDocument(state) {
   return withBlocks(state, []);
 }

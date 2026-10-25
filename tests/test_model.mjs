@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
-  moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
+  moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany, deleteTemplatesMany,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
 
@@ -60,6 +60,18 @@ test("manual template entry is stored separately and also added to history", () 
   state = addTemplate(state, "確認してください", "template-2", "history-template-2", time);
   assert.equal(state.templates.length, 1);
   assert.equal(state.templates[0].useCount, 2);
+});
+
+test("bulk template deletion preserves history and document blocks", () => {
+  let state = voice(initialState(), "本文", 0, "voice");
+  state = addTemplate(state, "定型A", "template-a", "history-a", time);
+  state = addTemplate(state, "定型B", "template-b", "history-b", time);
+  const historyBefore = state.history;
+  const documentBefore = state.document;
+  state = deleteTemplatesMany(state, ["template-a", "template-b"]);
+  assert.deepEqual(state.templates, []);
+  assert.equal(state.history, historyBefore);
+  assert.equal(state.document, documentBefore);
 });
 
 test("template and fixed-symbol drags insert distinct document blocks", () => {

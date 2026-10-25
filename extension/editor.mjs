@@ -2,7 +2,7 @@ import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-
 import { DEFAULT_FX_OSK_TARGET, validExtensionId, frameUrlFromReply, supportedKey } from "./fx-osk-bridge.mjs";
 import {
   FIXED_SYMBOLS, initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlocks, moveBlock, reorderBlocks,
-  setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
+  setPinnedMany, deleteHistoryMany, deleteTemplatesMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
 const HOST_NAME = "fox_voice_editor";
@@ -22,7 +22,9 @@ const historyItemsNode = $("history-items");
 const fixedItemsNode = $("fixed-items");
 const symbolItemsNode = $("symbol-items");
 const historyMenu = $("history-menu");
+const templateMenu = $("template-menu");
 const selectedHistoryNode = $("selected-history");
+const selectedTemplateNode = $("selected-template");
 const previewNode = $("preview");
 const saveStatusNode = $("save-status");
 const manualTextNode = $("manual-text");
@@ -57,9 +59,11 @@ let stopAt = null;
 let cancelRequested = false;
 let historyVisibleCount = 30;
 const selectedHistoryIds = new Set();
+const selectedTemplateIds = new Set();
 const selectedBlockIds = new Set();
 let openBlockMenuId = null;
 let openHistoryMenuId = null;
+let openTemplateMenuId = null;
 let dragState = null;
 let blockInteractionMode = "select";
 
@@ -185,6 +189,19 @@ function positionHistoryMenu() {
     ? Math.max(8, rect.top - historyMenu.offsetHeight - 8) : below}px`;
 }
 
+function positionTemplateMenu() {
+  if (templateMenu.hidden || !openTemplateMenuId) return;
+  const card = [...fixedItemsNode.querySelectorAll(".history-block")]
+    .find((node) => node.dataset.templateId === openTemplateMenuId);
+  if (!card) return;
+  const rect = card.getBoundingClientRect();
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - templateMenu.offsetWidth - 8));
+  const below = rect.bottom + 8;
+  templateMenu.style.left = `${left}px`;
+  templateMenu.style.top = `${below + templateMenu.offsetHeight > window.innerHeight
+    ? Math.max(8, rect.top - templateMenu.offsetHeight - 8) : below}px`;
+}
+
 function renderHistory() {
   historyItemsNode.replaceChildren();
   const pinned = editorState.history.filter((h) => h.pinned);
@@ -235,30 +252,53 @@ function renderHistory() {
 
 function renderTemplates() {
   fixedItemsNode.replaceChildren();
+  const existingIds = new Set(editorState.templates.map((template) => template.id));
+  for (const id of selectedTemplateIds) {
+    if (!existingIds.has(id)) selectedTemplateIds.delete(id);
+  }
+  const selected = editorState.templates.filter((template) => selectedTemplateIds.has(template.id));
+  selectedTemplateNode.textContent = blockInteractionMode === "reorder"
+    ? "並べ替え・追加モードです。定型をブロック枠へドラッグして追加できます。"
+    : selected.length === 0
+      ? "定型をタップして選択。複数選択するとまとめて削除できます。"
+      : selected.length === 1
+        ? `選択中: ${selected[0].text}（再タップで解除）`
+        : `選択中: ${selected.length}件（まとめて削除できます）`;
   if (editorState.templates.length === 0) {
     const empty = document.createElement("p");
     empty.textContent = "定型はありません。";
     fixedItemsNode.append(empty);
-    return;
-  }
-  const group = document.createElement("div");
-  group.className = "history-group normal";
-  for (const item of editorState.templates) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "history-block";
-    card.textContent = item.text;
-    card.disabled = !editable();
-    if (blockInteractionMode === "reorder") {
-      card.classList.add("external-card");
-      card.setAttribute("aria-label", `${item.text}。ブロック枠へドラッグして追加`);
-      card.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "template", item.id));
-    } else {
-      card.setAttribute("aria-label", `${item.text}。並べ替え・追加モードでドラッグして追加`);
+  } else {
+    const group = document.createElement("div");
+    group.className = "history-group normal";
+    for (const item of editorState.templates) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "history-block";
+      card.dataset.templateId = item.id;
+      card.textContent = item.text;
+      card.disabled = !editable();
+      card.setAttribute("aria-pressed", String(selectedTemplateIds.has(item.id)));
+      if (selectedTemplateIds.has(item.id)) card.classList.add("is-selected");
+      if (blockInteractionMode === "reorder") {
+        card.classList.add("external-card");
+        card.setAttribute("aria-label", `${item.text}。ブロック枠へドラッグして追加`);
+        card.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "template", item.id));
+      } else {
+        card.setAttribute("aria-label", `${item.text}。タップで選択`);
+        card.addEventListener("click", () => toggleTemplateSelection(item.id));
+      }
+      group.append(card);
     }
-    group.append(card);
+    fixedItemsNode.append(group);
   }
-  fixedItemsNode.append(group);
+  templateMenu.hidden = !openTemplateMenuId || selected.length === 0;
+  $("clear-template-selection").hidden = selected.length <= 1;
+  if (!templateMenu.hidden) {
+    $("template-delete").textContent = selected.length > 1 ? `定型から削除（${selected.length}件）` : "定型から削除";
+    positionTemplateMenu();
+  }
+  for (const action of templateMenu.querySelectorAll("button")) action.disabled = !editable();
 }
 
 function renderSymbols() {
@@ -309,6 +349,7 @@ function setSideTab(tab) {
     $(`${name}-view`).hidden = !selected;
   }
   if (tab !== "history") resetHistorySelection();
+  if (tab !== "fixed") resetTemplateSelection();
 }
 
 function addManualBlock() {
@@ -472,6 +513,24 @@ function resetHistorySelection() {
   selectedHistoryIds.clear();
   openHistoryMenuId = null;
   historyMenu.hidden = true;
+}
+
+function resetTemplateSelection() {
+  selectedTemplateIds.clear();
+  openTemplateMenuId = null;
+  templateMenu.hidden = true;
+}
+
+function toggleTemplateSelection(templateId) {
+  if (!editable() || blockInteractionMode !== "select") return;
+  if (selectedTemplateIds.has(templateId)) {
+    selectedTemplateIds.delete(templateId);
+    openTemplateMenuId = [...selectedTemplateIds].at(-1) ?? null;
+  } else {
+    selectedTemplateIds.add(templateId);
+    openTemplateMenuId = templateId;
+  }
+  renderTemplates();
 }
 
 function syncBlockMenuActions() {
@@ -921,6 +980,17 @@ $("clear-history-selection").addEventListener("click", () => {
   resetHistorySelection();
   renderHistory();
 });
+$("template-delete").addEventListener("click", () => {
+  if (!openTemplateMenuId || !editable() || selectedTemplateIds.size === 0) return;
+  const ids = new Set(selectedTemplateIds);
+  resetTemplateSelection();
+  mutate((state) => deleteTemplatesMany(state, ids));
+});
+$("clear-template-selection").addEventListener("click", () => {
+  if (!editable()) return;
+  resetTemplateSelection();
+  renderTemplates();
+});
 $("history-tab").addEventListener("click", () => setSideTab("history"));
 $("fixed-tab").addEventListener("click", () => setSideTab("fixed"));
 $("symbol-tab").addEventListener("click", () => setSideTab("symbol"));
@@ -966,6 +1036,7 @@ $("toggle-reorder").addEventListener("click", () => {
   if (blockInteractionMode === "reorder") {
     clearBlockSelection();
     resetHistorySelection();
+    resetTemplateSelection();
   }
   render();
 });
@@ -974,8 +1045,10 @@ $("load-more").addEventListener("click", () => {
   renderHistory();
 });
 window.addEventListener("scroll", positionHistoryMenu, true);
+window.addEventListener("scroll", positionTemplateMenu, true);
 window.addEventListener("scroll", positionInternalStatus, true);
 window.addEventListener("resize", positionHistoryMenu);
+window.addEventListener("resize", positionTemplateMenu);
 window.addEventListener("resize", positionInternalStatus);
 internalStatusToggle.addEventListener("click", () => setInternalStatusOpen(internalStatusNode.hidden));
 window.addEventListener("pointerdown", (event) => {

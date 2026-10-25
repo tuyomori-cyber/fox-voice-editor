@@ -90,7 +90,12 @@
           <button id="clear-history" type="button">履歴をすべて消去</button>
         </div>
         <div id="fixed-view" role="tabpanel" aria-labelledby="fixed-tab" hidden>
+          <p id="selected-template" role="status">定型をタップして選択。複数選択するとまとめて削除できます。</p>
           <div id="fixed-items"></div>
+          <div id="template-menu" class="context-menu" role="group" aria-label="選択した定型の操作" hidden>
+            <button id="template-delete" type="button">定型から削除</button>
+            <button id="clear-template-selection" type="button" hidden>選択解除（すべて）</button>
+          </div>
         </div>
         <div id="symbol-view" role="tabpanel" aria-labelledby="symbol-tab" hidden>
           <div id="symbol-items"></div>
