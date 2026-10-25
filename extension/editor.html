@@ -41,17 +41,17 @@
         </div>
         <p id="error" role="alert"></p>
         <div id="blocks" aria-label="編集する文章"></div>
-        <div class="manual-entry">
-          <label for="manual-text">手入力</label>
-          <input id="manual-text" type="text" inputmode="text" autocomplete="off" enterkeyhint="done" placeholder="文字を入力">
-          <button id="add-manual-block" type="button" disabled>追加</button>
-          <button id="add-template" type="button" disabled>定型へ追加</button>
-        </div>
         <div id="block-menu" class="context-menu" role="group" aria-label="ブロック操作" hidden>
           <button id="insert-before" type="button" hidden>前へ挿入</button>
           <button id="insert-after" type="button" hidden>後ろへ挿入</button>
           <button id="delete-block" type="button">削除</button>
           <button id="clear-block-selection" type="button" hidden>選択解除（すべて）</button>
+        </div>
+        <div class="manual-entry">
+          <label for="manual-text">手入力</label>
+          <input id="manual-text" type="text" inputmode="text" autocomplete="off" enterkeyhint="done" placeholder="文字を入力">
+          <button id="add-manual-block" type="button" disabled>追加</button>
+          <button id="add-template" type="button" disabled>定型へ追加</button>
         </div>
         <div class="section-heading preview-heading">
           <h2 id="preview-title">プレビュー</h2>
