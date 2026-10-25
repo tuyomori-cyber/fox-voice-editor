@@ -447,18 +447,6 @@ function mutate(change) {
   }
 }
 
-function positionBlockMenu() {
-  if (blockMenu.hidden || !openBlockMenuId) return;
-  const card = [...blocksNode.children].find((node) => node.dataset.blockId === openBlockMenuId);
-  if (!card) return;
-  const rect = card.getBoundingClientRect();
-  const width = blockMenu.offsetWidth;
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-  const below = rect.bottom + 8;
-  blockMenu.style.left = `${left}px`;
-  blockMenu.style.top = `${below + blockMenu.offsetHeight > window.innerHeight ? Math.max(8, rect.top - blockMenu.offsetHeight - 8) : below}px`;
-}
-
 function hideBlockMenu() {
   openBlockMenuId = null;
   blockMenu.hidden = true;
@@ -486,7 +474,6 @@ function syncBlockMenuActions() {
   $("insert-after").hidden = !canInsert;
   $("delete-block").textContent = selectedBlockIds.size > 1 ? `削除（${selectedBlockIds.size}件）` : "削除";
   $("clear-block-selection").hidden = selectedBlockIds.size <= 1;
-  if (!blockMenu.hidden) positionBlockMenu();
 }
 
 function toggleBlockSelection(blockId) {
@@ -976,10 +963,8 @@ $("load-more").addEventListener("click", () => {
   renderHistory();
 });
 window.addEventListener("scroll", positionHistoryMenu, true);
-window.addEventListener("scroll", positionBlockMenu, true);
 window.addEventListener("scroll", positionInternalStatus, true);
 window.addEventListener("resize", positionHistoryMenu);
-window.addEventListener("resize", positionBlockMenu);
 window.addEventListener("resize", positionInternalStatus);
 internalStatusToggle.addEventListener("click", () => setInternalStatusOpen(internalStatusNode.hidden));
 window.addEventListener("pointerdown", (event) => {
