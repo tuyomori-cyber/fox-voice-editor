@@ -1,7 +1,7 @@
 import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-send.mjs";
 import { DEFAULT_FX_OSK_TARGET, validExtensionId, frameUrlFromReply, supportedKey } from "./fx-osk-bridge.mjs";
 import {
-  FIXED_SYMBOLS, initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlocks, moveBlock, reorderBlocks,
+  FIXED_SYMBOLS, initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlocks, moveBlock, reorderBlocks,
   setPinnedMany, deleteHistoryMany, clearDocument, clearHistory, joinedText
 } from "./model.mjs";
 
@@ -585,7 +585,7 @@ function endBlockPointer(event, cancelled) {
     drag.marker?.remove();
     if (index >= 0) {
       const source = drag.source;
-      if (drag.kind === "history") mutate((state) => insertFromHistory(state, source, index, newId(), now()));
+      if (drag.kind === "history") mutate((state) => copyFromHistory(state, source, index, newId()));
       if (drag.kind === "template") mutate((state) => insertFromTemplate(state, source, index, newId(), newId(), now()));
       if (drag.kind === "symbol") mutate((state) => insertSymbolBlock(state, source, index, newId()));
     }

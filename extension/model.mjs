@@ -100,6 +100,12 @@ export function insertFromHistory(state, historyId, index, blockId, now) {
   );
 }
 
+export function copyFromHistory(state, historyId, index, blockId) {
+  const item = state.history.find((h) => h.id === historyId);
+  if (!item) throw new Error("履歴が見つかりません。");
+  return insertBlock(state, index, { id: blockId, text: item.text, origin: "history" });
+}
+
 export function insertFromTemplate(state, templateId, index, blockId, historyId, now) {
   const item = state.templates.find((t) => t.id === templateId);
   if (!item) throw new Error("定型が見つかりません。");

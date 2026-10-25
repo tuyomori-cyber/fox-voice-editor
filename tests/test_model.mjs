@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
+  initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
   moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
@@ -75,6 +75,16 @@ test("template and fixed-symbol drags insert distinct document blocks", () => {
   assert.equal(state.templates[0].useCount, 2);
   assert.ok(state.history.some((item) => item.text === "定型句"));
   assert.throws(() => insertSymbolBlock(state, "あ", 0, "invalid"));
+});
+
+test("history drag copies a block without changing its source entry", () => {
+  let state = voice(initialState(), "履歴の語句", 0, "voice-1");
+  const source = state.history.find((item) => item.text === "履歴の語句");
+  const historyBefore = structuredClone(state.history);
+  state = copyFromHistory(state, source.id, 1, "history-copy");
+  assert.equal(state.document.blocks[1].text, "履歴の語句");
+  assert.equal(state.document.blocks[1].origin, "history");
+  assert.deepEqual(state.history, historyBefore);
 });
 
 
