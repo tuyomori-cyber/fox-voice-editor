@@ -2,7 +2,7 @@ import { DEFAULT_TARGET, validateDraft, sendDraft, statusText } from "./focodex-
 import { DEFAULT_FX_OSK_TARGET, validExtensionId, frameUrlFromReply, supportedKey } from "./fx-osk-bridge.mjs";
 import {
   FIXED_SYMBOLS, initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlocks, moveBlock, reorderBlocks,
-  setPinnedMany, deleteHistoryMany, deleteTemplatesMany, clearDocument, clearHistory, joinedText
+  deleteHistoryMany, deleteTemplatesMany, clearDocument, clearHistory, joinedText, sortEntries
 } from "./model.mjs";
 
 const HOST_NAME = "fox_voice_editor";
@@ -66,6 +66,9 @@ let openHistoryMenuId = null;
 let openTemplateMenuId = null;
 let dragState = null;
 let blockInteractionMode = "select";
+const historySort = {locale: "ja", direction: "asc"};
+const templateSort = {locale: "ja", direction: "asc"};
+let activeSideTab = "history";
 
 const busyStates = new Set(["preparing", "starting", "recording", "stopping", "converting", "recognizing", "cancelling", "syncing"]);
 const editable = () => editorState !== null && libraryReady && !busyStates.has(hostState);
@@ -86,7 +89,7 @@ function showError(message) {
 }
 
 function libraryFromState(state) {
-  return {schemaVersion: 1, history: state.history, templates: state.templates};
+  return {schemaVersion: state.schemaVersion, history: state.history, templates: state.templates};
 }
 
 function saveLibraryState(state) {
@@ -152,7 +155,7 @@ function renderBlocks() {
 }
 
 function phraseBlock(item) {
-  const block = button(item.pinned ? `📌 ${item.text}` : item.text, () => {
+  const block = button(item.text, () => {
     if (blockInteractionMode !== "select") return;
     if (selectedHistoryIds.has(item.id)) {
       selectedHistoryIds.delete(item.id);
@@ -204,31 +207,28 @@ function positionTemplateMenu() {
 
 function renderHistory() {
   historyItemsNode.replaceChildren();
-  const pinned = editorState.history.filter((h) => h.pinned);
-  const normal = editorState.history.filter((h) => !h.pinned);
   const existingIds = new Set(editorState.history.map((h) => h.id));
   for (const id of selectedHistoryIds) {
     if (!existingIds.has(id)) selectedHistoryIds.delete(id);
   }
   const selected = editorState.history.filter((h) => selectedHistoryIds.has(h.id));
   selectedHistoryNode.textContent = blockInteractionMode === "reorder"
-    ? "並べ替え・追加モードです。履歴・定型・記号をブロック枠へドラッグして追加できます。"
+    ? "並べ替え・追加モードです。履歴・定型をブロック枠へドラッグして追加できます。"
     : selected.length === 0
-    ? "語句をタップして選択。複数選択するとまとめてピン留め・削除できます。"
+    ? "語句をタップして選択。複数選択するとまとめて削除できます。"
     : selected.length === 1
       ? `選択中: ${selected[0].text}（再タップで解除）`
-      : `選択中: ${selected.length}件（ピン留め・削除をまとめて実行。前後挿入は1件選択時のみ）`;
+      : `選択中: ${selected.length}件（削除をまとめて実行。前後挿入は1件選択時のみ）`;
   syncBlockMenuActions();
-  const visibleNormal = normal.slice(0, historyVisibleCount);
-  const visibleIds = new Set([...pinned, ...visibleNormal].map((h) => h.id));
+  const visibleHistory = editorState.history.slice(0, historyVisibleCount);
+  const visibleIds = new Set(visibleHistory.map((h) => h.id));
   if (openHistoryMenuId && !visibleIds.has(openHistoryMenuId)) {
     openHistoryMenuId = [...selectedHistoryIds].reverse().find((id) => visibleIds.has(id)) ?? null;
   }
-  for (const [items, kind] of [[pinned, "pinned"], [visibleNormal, "normal"]]) {
-    if (items.length === 0) continue;
+  if (visibleHistory.length > 0) {
     const group = document.createElement("div");
-    group.className = `history-group ${kind}`;
-    for (const item of items) group.append(phraseBlock(item));
+    group.className = "history-group normal";
+    for (const item of visibleHistory) group.append(phraseBlock(item));
     historyItemsNode.append(group);
   }
   if (editorState.history.length === 0) {
@@ -240,13 +240,11 @@ function renderHistory() {
   $("clear-history-selection").hidden = selected.length <= 1;
   if (!historyMenu.hidden) {
     const count = selected.length;
-    $("history-pin").textContent = selected.every((item) => item.pinned)
-      ? `ピンを外す（${count}件）` : `ピン留め（${count}件）`;
     $("history-delete").textContent = `履歴から削除（${count}件）`;
     positionHistoryMenu();
   }
   for (const action of historyMenu.querySelectorAll("button")) action.disabled = !editable();
-  $("load-more").hidden = normal.length <= historyVisibleCount;
+  $("load-more").hidden = editorState.history.length <= historyVisibleCount;
   $("clear-history").disabled = !editable() || editorState.history.length === 0;
 }
 
@@ -301,6 +299,20 @@ function renderTemplates() {
   for (const action of templateMenu.querySelectorAll("button")) action.disabled = !editable();
 }
 
+function renderSortControls() {
+  const sort = activeSideTab === "history" ? historySort : templateSort;
+  const enabled = activeSideTab !== "symbol" && editable();
+  const language = $("side-sort-language");
+  const direction = $("side-sort-direction");
+  language.textContent = sort.locale === "ja" ? "日本語順" : "ABC順";
+  language.setAttribute("aria-pressed", String(sort.locale === "ja"));
+  direction.textContent = sort.direction === "asc" ? "昇順" : "降順";
+  direction.setAttribute("aria-pressed", String(sort.direction === "asc"));
+  language.disabled = !enabled;
+  direction.disabled = !enabled;
+  $("side-sort").disabled = !enabled;
+}
+
 function renderSymbols() {
   symbolItemsNode.replaceChildren();
   for (const symbol of FIXED_SYMBOLS) {
@@ -309,13 +321,11 @@ function renderSymbols() {
     card.className = "history-block";
     card.textContent = symbol;
     card.disabled = !editable();
-    if (blockInteractionMode === "reorder") {
-      card.classList.add("external-card");
-      card.setAttribute("aria-label", `${symbol}。ブロック枠へドラッグして追加`);
-      card.addEventListener("pointerdown", (event) => onExternalPointerDown(event, "symbol", symbol));
-    } else {
-      card.setAttribute("aria-label", `${symbol}。並べ替え・追加モードでドラッグして追加`);
-    }
+    card.setAttribute("aria-label", `${symbol}。タップで末尾へ追加`);
+    card.addEventListener("click", () => {
+      if (!editable()) return;
+      mutate((state) => insertSymbolBlock(state, symbol, state.document.blocks.length, newId()));
+    });
     symbolItemsNode.append(card);
   }
 }
@@ -326,6 +336,7 @@ function render() {
   renderHistory();
   renderTemplates();
   renderSymbols();
+  renderSortControls();
   const preview = joinedText(editorState);
   previewNode.textContent = preview;
   manualTextNode.disabled = !editable();
@@ -343,6 +354,7 @@ function render() {
 }
 
 function setSideTab(tab) {
+  activeSideTab = tab;
   for (const name of ["history", "fixed", "symbol"]) {
     const selected = name === tab;
     $(`${name}-tab`).setAttribute("aria-selected", String(selected));
@@ -350,6 +362,7 @@ function setSideTab(tab) {
   }
   if (tab !== "history") resetHistorySelection();
   if (tab !== "fixed") resetTemplateSelection();
+  renderSortControls();
 }
 
 function addManualBlock() {
@@ -646,7 +659,6 @@ function endBlockPointer(event, cancelled) {
       const source = drag.source;
       if (drag.kind === "history") mutate((state) => copyFromHistory(state, source, index, newId()));
       if (drag.kind === "template") mutate((state) => insertFromTemplate(state, source, index, newId(), newId(), now()));
-      if (drag.kind === "symbol") mutate((state) => insertSymbolBlock(state, source, index, newId()));
     }
   } else if (drag.dragged) {
     drag.card.dataset.ignoreClick = "true";
@@ -736,7 +748,7 @@ function finishRecording() {
 function handleMessage(message) {
   if (message.event === "library_loaded") {
     try {
-      const libraryState = restoreState({schemaVersion: 1, document: {blocks: []}, history: message.library?.history, templates: message.library?.templates});
+      const libraryState = restoreState({schemaVersion: message.library?.schemaVersion, document: {blocks: []}, history: message.library?.history, templates: message.library?.templates});
       editorState = {...editorState, history: libraryState.history, templates: libraryState.templates};
       libraryReady = true;
       render();
@@ -961,14 +973,6 @@ $("cancel").addEventListener("click", () => {
 });
 $("insert-before").addEventListener("click", () => insertRelative(false));
 $("insert-after").addEventListener("click", () => insertRelative(true));
-$("history-pin").addEventListener("click", () => {
-  if (!openHistoryMenuId || !editable() || selectedHistoryIds.size === 0) return;
-  const ids = new Set(selectedHistoryIds);
-  const selected = editorState.history.filter((entry) => ids.has(entry.id));
-  const pinned = !selected.every((entry) => entry.pinned);
-  resetHistorySelection();
-  mutate((state) => setPinnedMany(state, ids, pinned));
-});
 $("history-delete").addEventListener("click", () => {
   if (!openHistoryMenuId || !editable() || selectedHistoryIds.size === 0) return;
   const ids = new Set(selectedHistoryIds);
@@ -994,6 +998,23 @@ $("clear-template-selection").addEventListener("click", () => {
 $("history-tab").addEventListener("click", () => setSideTab("history"));
 $("fixed-tab").addEventListener("click", () => setSideTab("fixed"));
 $("symbol-tab").addEventListener("click", () => setSideTab("symbol"));
+$("side-sort-language").addEventListener("click", () => {
+  if (!editable() || activeSideTab === "symbol") return;
+  const sort = activeSideTab === "history" ? historySort : templateSort;
+  sort.locale = sort.locale === "ja" ? "en" : "ja";
+  renderSortControls();
+});
+$("side-sort-direction").addEventListener("click", () => {
+  if (!editable() || activeSideTab === "symbol") return;
+  const sort = activeSideTab === "history" ? historySort : templateSort;
+  sort.direction = sort.direction === "asc" ? "desc" : "asc";
+  renderSortControls();
+});
+$("side-sort").addEventListener("click", () => {
+  if (!editable() || activeSideTab === "symbol") return;
+  const sort = activeSideTab === "history" ? historySort : templateSort;
+  mutate((state) => sortEntries(state, activeSideTab === "history" ? "history" : "templates", sort.locale, sort.direction));
+});
 $("add-manual-block").addEventListener("click", addManualBlock);
 $("add-template").addEventListener("click", addManualTemplate);
 manualTextNode.addEventListener("keydown", (event) => {
@@ -1069,7 +1090,7 @@ $("clear-document").addEventListener("click", () => {
   }
 });
 $("clear-history").addEventListener("click", () => {
-  if (confirm("ピン留めを含む履歴をすべて消去しますか？")) {
+  if (confirm("履歴をすべて消去しますか？")) {
     resetHistorySelection();
     mutate(clearHistory);
   }

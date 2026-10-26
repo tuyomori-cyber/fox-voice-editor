@@ -11,37 +11,45 @@ const DEFAULT_PHRASES = ["の", "を", "ただし", "ではなく", "まず現�
 
 export function initialState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     document: { blocks: [] },
     templates: [],
     history: DEFAULT_PHRASES.map((text, index) => ({
-      id: `preset-${index}`, text, pinned: true, lastUsedAt: null, useCount: 0
+      id: `preset-${index}`, text, lastUsedAt: null, useCount: 0
     }))
   };
 }
 
 export function restoreState(raw) {
   if (raw === undefined) return initialState();
-  if (raw?.schemaVersion !== 1 || !Array.isArray(raw.document?.blocks) || !Array.isArray(raw.history)) {
+  if (![1, 2].includes(raw?.schemaVersion) || !Array.isArray(raw.document?.blocks) || !Array.isArray(raw.history)) {
     throw new Error("保存データの形式を読み取れません。内容は上書きしません。");
   }
   const blocks = raw.document.blocks;
   const history = raw.history;
   const templates = raw.templates === undefined ? [] : raw.templates;
+  const isValidEntry = (entry) => typeof entry?.id === "string" && typeof entry?.text === "string"
+    && (entry.lastUsedAt === null || typeof entry.lastUsedAt === "string")
+    && Number.isInteger(entry.useCount) && entry.useCount >= 0
+    && (raw.schemaVersion === 2 || typeof entry.pinned === "boolean");
+  const withoutPinned = ({pinned, ...entry}) => entry;
   if (blocks.some((b) => typeof b?.id !== "string" || typeof b?.text !== "string") ||
-      history.some((h) => typeof h?.id !== "string" || typeof h?.text !== "string" || typeof h?.pinned !== "boolean") ||
+      history.some((h) => !isValidEntry(h)) ||
       !Array.isArray(templates) ||
-      templates.some((t) => typeof t?.id !== "string" || typeof t?.text !== "string" || typeof t?.pinned !== "boolean") ||
+      templates.some((t) => !isValidEntry(t)) ||
       new Set(blocks.map((b) => b.id)).size !== blocks.length ||
       new Set(history.map((h) => h.id)).size !== history.length ||
       new Set(templates.map((t) => t.id)).size !== templates.length) {
     throw new Error("保存データが不正です。内容は上書きしません。");
   }
+  const pinnedHistory = raw.schemaVersion === 1 ? history.filter((entry) => entry.pinned) : [];
+  const migratedTemplates = [...templates, ...pinnedHistory.filter((entry) => !templates.some((template) => template.text === entry.text))]
+    .map(withoutPinned);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     document: { blocks: blocks.map((b) => ({ ...b })) },
-    templates: templates.map((t) => ({ ...t })),
-    history: history.map((h) => ({ ...h }))
+    templates: migratedTemplates,
+    history: (raw.schemaVersion === 1 ? history.filter((entry) => !entry.pinned) : history).map(withoutPinned)
   };
 }
 
@@ -52,10 +60,7 @@ function withBlocks(state, blocks) {
 function trimHistory(history) {
   const result = [...history];
   while (result.length > HISTORY_LIMIT) {
-    let oldest = result.length - 1;
-    while (oldest >= 0 && result[oldest].pinned) oldest -= 1;
-    if (oldest < 0) break;
-    result.splice(oldest, 1);
+    result.shift();
   }
   return result;
 }
@@ -64,16 +69,16 @@ function touchHistory(state, text, now, id) {
   const existing = state.history.find((h) => h.text === text);
   const updated = existing
     ? { ...existing, lastUsedAt: now, useCount: (existing.useCount || 0) + 1 }
-    : { id, text, pinned: false, lastUsedAt: now, useCount: 1 };
-  return { ...state, history: trimHistory([updated, ...state.history.filter((h) => h !== existing)]) };
+    : { id, text, lastUsedAt: now, useCount: 1 };
+  return { ...state, history: trimHistory([...state.history.filter((h) => h !== existing), updated]) };
 }
 
 function touchTemplate(state, text, now, id) {
   const existing = state.templates.find((t) => t.text === text);
   const updated = existing
     ? { ...existing, lastUsedAt: now, useCount: (existing.useCount || 0) + 1 }
-    : { id, text, pinned: false, lastUsedAt: now, useCount: 1 };
-  return { ...state, templates: trimHistory([updated, ...state.templates.filter((t) => t !== existing)]) };
+    : { id, text, lastUsedAt: now, useCount: 1 };
+  return { ...state, templates: trimHistory([...state.templates.filter((t) => t !== existing), updated]) };
 }
 
 function insertBlock(state, index, block) {
@@ -161,17 +166,22 @@ export function reorderBlocks(state, orderedIds) {
   return withBlocks(state, orderedIds.map((id) => byId.get(id)));
 }
 
-export function setPinned(state, historyId, pinned) {
-  return setPinnedMany(state, [historyId], pinned);
+export function sortEntries(state, collection, locale, direction) {
+  if (!['history', 'templates'].includes(collection) || !['ja', 'en'].includes(locale) || !['asc', 'desc'].includes(direction)) {
+    throw new Error("並べ替え条件が不正です。");
+  }
+  const collator = new Intl.Collator(locale, {numeric: true, sensitivity: "base"});
+  const multiplier = direction === "asc" ? 1 : -1;
+  const sorted = state[collection]
+    .map((entry, index) => ({entry, index}))
+    .sort((left, right) => multiplier * (collator.compare(left.entry.text, right.entry.text) || left.index - right.index))
+    .map(({entry}) => entry);
+  if (sorted.every((entry, index) => entry === state[collection][index])) return state;
+  return {...state, [collection]: sorted};
 }
 
 export function deleteHistory(state, historyId) {
   return deleteHistoryMany(state, [historyId]);
-}
-
-export function setPinnedMany(state, historyIds, pinned) {
-  const ids = new Set(historyIds);
-  return { ...state, history: state.history.map((h) => ids.has(h.id) ? { ...h, pinned } : h) };
 }
 
 export function deleteHistoryMany(state, historyIds) {

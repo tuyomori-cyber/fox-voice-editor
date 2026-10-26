@@ -159,9 +159,9 @@ sys.exit(host.main())
         self.assertEqual(initial["event"], "library_loaded")
         self.assertFalse(initial["exists"])
         library = {
-            "schemaVersion": 1,
-            "history": [{"id": "history-1", "text": "履歴", "pinned": False, "lastUsedAt": None, "useCount": 1}],
-            "templates": [{"id": "template-1", "text": "定型", "pinned": False, "lastUsedAt": None, "useCount": 1}],
+            "schemaVersion": 2,
+            "history": [{"id": "history-1", "text": "履歴", "lastUsedAt": None, "useCount": 1}],
+            "templates": [{"id": "template-1", "text": "定型", "lastUsedAt": None, "useCount": 1}],
         }
         self._send_request({"action": "save_library", "library": library})
         self.assertEqual(self._read()["event"], "library_saved")
@@ -170,8 +170,24 @@ sys.exit(host.main())
         restored = self._read()
         self.assertTrue(restored["exists"])
         self.assertEqual(restored["library"], library)
-        self._send_request({"action": "save_library", "library": {"schemaVersion": 1, "history": [], "templates": [{"text": "不正"}]}})
+        self._send_request({"action": "save_library", "library": {"schemaVersion": 2, "history": [], "templates": [{"text": "不正"}]}})
         self.assertEqual(self._read()["code"], "LIBRARY_SAVE_FAILED")
+
+    def test_legacy_pinned_history_migrates_to_templates(self) -> None:
+        self.library_path.write_text(json.dumps({
+            "schemaVersion": 1,
+            "history": [
+                {"id": "pin", "text": "移行する定型", "pinned": True, "lastUsedAt": None, "useCount": 1},
+                {"id": "history", "text": "残す履歴", "pinned": False, "lastUsedAt": None, "useCount": 1},
+            ],
+            "templates": [],
+        }))
+        self._send("load_library")
+        library = self._read()["library"]
+        self.assertEqual(library["schemaVersion"], 2)
+        self.assertEqual([entry["text"] for entry in library["history"]], ["残す履歴"])
+        self.assertEqual([entry["text"] for entry in library["templates"]], ["移行する定型"])
+        self.assertNotIn("pinned", json.loads(self.library_path.read_text())["templates"][0])
 
     def test_microphone_adjusts_once_and_manual_recheck_finds_zero(self) -> None:
         self.microphone_config.write_text('{"boost_fix": true}')

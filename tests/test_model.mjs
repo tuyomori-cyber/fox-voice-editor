@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
-  moveBlock, reorderBlocks, setPinned, deleteHistory, setPinnedMany, deleteHistoryMany, deleteTemplatesMany,
+  moveBlock, reorderBlocks, deleteHistory, deleteHistoryMany, deleteTemplatesMany, sortEntries,
   joinedText, HISTORY_LIMIT
 } from "../extension/model.mjs";
 
@@ -27,7 +27,7 @@ test("voice blocks insert, move and join without separators", () => {
 test("history reuse creates independent block and deletion preserves document", () => {
   let state = voice(initialState(), "既存機能は維持", 0, "b1");
   const history = state.history.find((h) => h.text === "既存機能は維持");
-  assert.equal(history.pinned, true);
+  assert.equal(Object.hasOwn(history, "pinned"), false);
   assert.equal(state.history.filter((h) => h.text === history.text).length, 1);
   state = insertFromHistory(state, history.id, 1, "b2", time);
   assert.equal(state.document.blocks[1].origin, "history");
@@ -74,13 +74,13 @@ test("bulk template deletion preserves history and document blocks", () => {
   assert.equal(state.document, documentBefore);
 });
 
-test("template and fixed-symbol drags insert distinct document blocks", () => {
+test("template insertion and fixed-symbol appending create distinct document blocks", () => {
   let state = voice(initialState(), "前", 0, "before");
   state = addTemplate(state, "定型句", "template-1", "template-history-1", time);
   state = insertFromTemplate(state, "template-1", 1, "template-block", "template-history-2", time);
-  state = insertSymbolBlock(state, "、", 2, "symbol-block");
-  state = insertSymbolBlock(state, "？", 3, "fullwidth-symbol-block");
-  state = insertSymbolBlock(state, "\\", 4, "halfwidth-symbol-block");
+  state = insertSymbolBlock(state, "、", state.document.blocks.length, "symbol-block");
+  state = insertSymbolBlock(state, "？", state.document.blocks.length, "fullwidth-symbol-block");
+  state = insertSymbolBlock(state, "\\", state.document.blocks.length, "halfwidth-symbol-block");
   assert.deepEqual(state.document.blocks.map((block) => [block.text, block.origin]), [
     ["前", "voice"], ["定型句", "template"], ["、", "symbol"], ["？", "symbol"], ["\\", "symbol"]
   ]);
@@ -122,40 +122,54 @@ test("drag order persists as an exact permutation of block ids", () => {
   assert.throws(() => reorderBlocks(reordered, ["c", "a", "missing"]));
 });
 
-test("unpinned history is capped while pinned entries survive", () => {
+test("history and templates sort only when explicitly requested", () => {
+  const entry = (id, text) => ({id, text, lastUsedAt: null, useCount: 0});
+  const state = {...initialState(), history: [entry("b", "B2"), entry("a", "A10"), entry("c", "A2")], templates: [entry("t2", "い"), entry("t1", "あ")]};
+  const history = sortEntries(state, "history", "en", "asc");
+  assert.deepEqual(history.history.map((item) => item.text), ["A2", "A10", "B2"]);
+  assert.equal(history.templates, state.templates);
+  const templates = sortEntries(history, "templates", "ja", "desc");
+  assert.deepEqual(templates.templates.map((item) => item.text), ["い", "あ"]);
+  assert.equal(sortEntries(templates, "templates", "ja", "desc"), templates);
+  assert.throws(() => sortEntries(state, "document", "ja", "asc"));
+});
+
+test("history is capped by removing its oldest entries", () => {
   let state = initialState();
-  const pinnedId = state.history[0].id;
   for (let i = 0; i < HISTORY_LIMIT + 10; i += 1) {
     state = voice(state, `項目${i}`, state.document.blocks.length, `b${i}`);
   }
   assert.equal(state.history.length, HISTORY_LIMIT);
-  assert.ok(state.history.some((h) => h.id === pinnedId));
+  assert.ok(!state.history.some((h) => h.text === "の"));
   assert.ok(!state.history.some((h) => h.text === "項目0"));
-  state = setPinned(state, pinnedId, false);
-  assert.equal(state.history.find((h) => h.id === pinnedId).pinned, false);
+  assert.ok(state.history.some((h) => h.text === `項目${HISTORY_LIMIT + 9}`));
 });
 
-test("bulk pin and deletion affect only selected history, not document blocks", () => {
+test("bulk history deletion preserves unselected entries and document blocks", () => {
   let state = voice(initialState(), "追加A", 0, "a");
   state = voice(state, "追加B", 1, "b");
   const selectedIds = state.history.filter((h) => ["追加A", "追加B"].includes(h.text)).map((h) => h.id);
   const other = state.history.find((h) => h.text !== "追加A" && h.text !== "追加B");
-  state = setPinnedMany(state, selectedIds, true);
-  assert.ok(selectedIds.every((id) => state.history.find((h) => h.id === id).pinned));
-  assert.equal(state.history.find((h) => h.id === other.id).pinned, other.pinned);
-  state = setPinnedMany(state, selectedIds, false);
-  assert.ok(selectedIds.every((id) => !state.history.find((h) => h.id === id).pinned));
   state = deleteHistoryMany(state, selectedIds);
   assert.ok(selectedIds.every((id) => !state.history.some((h) => h.id === id)));
   assert.ok(state.history.some((h) => h.id === other.id));
   assert.equal(joinedText(state), "追加A追加B");
 });
 
-test("invalid persisted state is rejected without silent reset", () => {
-  assert.throws(() => restoreState({ schemaVersion: 2, document: { blocks: [] }, history: [] }));
+test("legacy pinned state migrates and invalid persisted state is rejected", () => {
+  assert.throws(() => restoreState({ schemaVersion: 3, document: { blocks: [] }, history: [] }));
   assert.throws(() => restoreState({ schemaVersion: 1, document: { blocks: [{ id: "a" }] }, history: [] }));
-  const legacy = initialState();
-  delete legacy.templates;
-  assert.deepEqual(restoreState(legacy).templates, []);
-  assert.equal(restoreState(undefined).schemaVersion, 1);
+  const legacy = {
+    schemaVersion: 1,
+    document: {blocks: []},
+    history: [
+      {id: "pin", text: "定型へ移行", pinned: true, lastUsedAt: null, useCount: 1},
+      {id: "history", text: "履歴のまま", pinned: false, lastUsedAt: null, useCount: 1}
+    ]
+  };
+  const migrated = restoreState(legacy);
+  assert.deepEqual(migrated.history.map((entry) => entry.text), ["履歴のまま"]);
+  assert.deepEqual(migrated.templates.map((entry) => entry.text), ["定型へ移行"]);
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(restoreState(undefined).schemaVersion, 2);
 });

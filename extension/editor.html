@@ -73,16 +73,22 @@
       </section>
 
       <section class="workspace-panel history-panel" aria-label="履歴・定型・記号">
-        <div class="side-tabs" role="tablist" aria-label="履歴・定型・記号">
-          <button id="history-tab" type="button" role="tab" aria-selected="true" aria-controls="history-view">履歴</button>
-          <button id="fixed-tab" type="button" role="tab" aria-selected="false" aria-controls="fixed-view">定型</button>
-          <button id="symbol-tab" type="button" role="tab" aria-selected="false" aria-controls="symbol-view">記号</button>
+        <div class="side-tab-bar">
+          <div class="side-tabs" role="tablist" aria-label="履歴・定型・記号">
+            <button id="history-tab" type="button" role="tab" aria-selected="true" aria-controls="history-view">履歴</button>
+            <button id="fixed-tab" type="button" role="tab" aria-selected="false" aria-controls="fixed-view">定型</button>
+            <button id="symbol-tab" type="button" role="tab" aria-selected="false" aria-controls="symbol-view">記号</button>
+          </div>
+          <div class="sort-controls side-sort-controls" role="group" aria-label="表示中の項目の並べ替え">
+            <button id="side-sort-language" type="button" aria-pressed="true">日本語順</button>
+            <button id="side-sort-direction" type="button" aria-pressed="true">昇順</button>
+            <button id="side-sort" type="button">Sort</button>
+          </div>
         </div>
         <div id="history-view" role="tabpanel" aria-labelledby="history-tab">
-          <p id="selected-history" role="status">語句をタップして選択。複数選択するとまとめてピン留め・削除できます。</p>
+          <p id="selected-history" role="status">語句をタップして選択。複数選択するとまとめて削除できます。</p>
           <div id="history-items"></div>
           <div id="history-menu" class="context-menu" role="group" aria-label="選択した履歴の操作" hidden>
-            <button id="history-pin" type="button">ピン留め</button>
             <button id="history-delete" type="button">履歴から削除</button>
             <button id="clear-history-selection" type="button" hidden>選択解除（すべて）</button>
           </div>

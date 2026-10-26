@@ -37,7 +37,7 @@ MICROPHONE_CARD = "PCH"
 MICROPHONE_CONTROL = "Internal Mic Boost"
 AMIXER_TIMEOUT_SECONDS = 2
 LIBRARY_PATH = Path.home() / ".local/share/fox-voice-editor/library-v1.json"
-LIBRARY_SCHEMA_VERSION = 1
+LIBRARY_SCHEMA_VERSION = 2
 LIBRARY_ITEM_LIMIT = 500
 LIBRARY_TEXT_LIMIT = 4096
 
@@ -47,9 +47,11 @@ def empty_library() -> dict:
 
 
 def validate_library(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "history", "templates"} or value["schemaVersion"] != LIBRARY_SCHEMA_VERSION:
+    if not isinstance(value, dict) or set(value) != {"schemaVersion", "history", "templates"} or value["schemaVersion"] not in (1, LIBRARY_SCHEMA_VERSION):
         raise ValueError("定型・履歴データの形式が正しくありません。")
+    legacy = value["schemaVersion"] == 1
     normalized: dict[str, object] = {"schemaVersion": LIBRARY_SCHEMA_VERSION}
+    pinned_history = []
     for collection in ("history", "templates"):
         entries = value[collection]
         if not isinstance(entries, list) or len(entries) > LIBRARY_ITEM_LIMIT:
@@ -57,18 +59,26 @@ def validate_library(value: object) -> dict:
         ids: set[str] = set()
         checked = []
         for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != {"id", "text", "pinned", "lastUsedAt", "useCount"}:
+            expected_keys = {"id", "text", "pinned", "lastUsedAt", "useCount"} if legacy else {"id", "text", "lastUsedAt", "useCount"}
+            if not isinstance(entry, dict) or set(entry) != expected_keys:
                 raise ValueError("定型・履歴の項目形式が正しくありません。")
             entry_id, text = entry["id"], entry["text"]
             if not isinstance(entry_id, str) or not entry_id or len(entry_id) > 128 or entry_id in ids:
                 raise ValueError("定型・履歴のIDが正しくありません。")
             if not isinstance(text, str) or not text or len(text) > LIBRARY_TEXT_LIMIT:
                 raise ValueError("定型・履歴の文字列が正しくありません。")
-            if type(entry["pinned"]) is not bool or (entry["lastUsedAt"] is not None and not isinstance(entry["lastUsedAt"], str)) or type(entry["useCount"]) is not int or entry["useCount"] < 0:
+            if (legacy and type(entry["pinned"]) is not bool) or (entry["lastUsedAt"] is not None and not isinstance(entry["lastUsedAt"], str)) or type(entry["useCount"]) is not int or entry["useCount"] < 0:
                 raise ValueError("定型・履歴の項目値が正しくありません。")
             ids.add(entry_id)
-            checked.append({key: entry[key] for key in ("id", "text", "pinned", "lastUsedAt", "useCount")})
+            normalized_entry = {key: entry[key] for key in ("id", "text", "lastUsedAt", "useCount")}
+            if legacy and collection == "history" and entry["pinned"]:
+                pinned_history.append(normalized_entry)
+            else:
+                checked.append(normalized_entry)
         normalized[collection] = checked
+    if legacy:
+        template_texts = {entry["text"] for entry in normalized["templates"]}
+        normalized["templates"].extend(entry for entry in pinned_history if entry["text"] not in template_texts)
     return normalized
 
 
@@ -77,7 +87,10 @@ def load_library() -> tuple[dict, bool]:
         raw = json.loads(LIBRARY_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return empty_library(), False
-    return validate_library(raw), True
+    library = validate_library(raw)
+    if raw["schemaVersion"] != LIBRARY_SCHEMA_VERSION:
+        save_library(library)
+    return library, True
 
 
 def save_library(value: object) -> None:
