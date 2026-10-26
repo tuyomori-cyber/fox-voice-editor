@@ -1,6 +1,6 @@
 # fox-voice-editor
 
-Linux側で録音して日本語の文字起こし結果だけをFirefox拡張へ返します。認識結果をブロックとして蓄積し、タッチで組み立てます。現行仕様は [fox-voice-editor_仕様書_v0.2.1.md](fox-voice-editor_仕様書_v0.2.1.md) を参照してください。v0.2.0を基準仕様として引き継ぎ、v0.2.1から定型削除を追加した実用テスト版です。
+Linux側で録音して日本語の文字起こし結果だけをFirefox拡張へ返します。認識結果をブロックとして蓄積し、タッチで組み立てます。現行仕様は[仕様書 v0.3](specification/fox-voice-editor仕様書v0.3.md)を参照してください。旧世代の仕様・連携検討記録は[old/specification/](old/specification/)に保管しています。
 
 ## 前提
 
@@ -71,7 +71,7 @@ python3 tests/check_reazon_worker.py
 
 Focodexは文章を最大3件のFIFO受信バッファへ保存し、入力欄を自動変更しません。ユーザーがバッファ項目の「指示文へ」を押して反映します。受信だけではCodexを実行しません。
 
-応答を受け取れなかった場合は、「同じ文章を再送」で同じID・本文を明示再送できます。自動再送と状態照会はありません。更新後は両拡張と既存の操作タブを手動で再読み込みしてください。実装条件は[追加仕様](specification-focodex連携.md)を参照してください。Firefox実配送・Split View・Surfaceタッチの確認は未実施です。
+応答を受け取れなかった場合は、「同じ文章を再送」で同じID・本文を明示再送できます。自動再送と状態照会はありません。更新後は両拡張と既存の操作タブを手動で再読み込みしてください。実装条件は[現行仕様](specification/fox-voice-editor仕様書v0.3.md)と[`IF-VE-FD-001`／`002`](../foxbook/docs/interfaces/fox-voice-editor--focodex.md)を参照してください。Firefox実配送・Split View・Surfaceタッチの確認は未実施です。
 
 ```bash
 node tests/test_focodex_send.mjs
