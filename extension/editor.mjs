@@ -319,9 +319,10 @@ function renderSymbols() {
     const card = document.createElement("button");
     card.type = "button";
     card.className = "history-block";
-    card.textContent = symbol;
+    const symbolLabel = symbol === " " ? "空白" : symbol === "\n" ? "改行" : symbol;
+    card.textContent = symbolLabel;
     card.disabled = !editable();
-    card.setAttribute("aria-label", `${symbol}。タップで末尾へ追加`);
+    card.setAttribute("aria-label", `${symbolLabel}。タップで末尾へ追加`);
     card.addEventListener("click", () => {
       if (!editable()) return;
       mutate((state) => insertSymbolBlock(state, symbol, state.document.blocks.length, newId()));

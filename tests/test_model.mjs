@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   initialState, restoreState, applyVoiceResult, appendManualBlock, addTemplate, insertFromHistory, copyFromHistory, insertFromTemplate, insertSymbolBlock, deleteBlock, deleteBlocks,
   moveBlock, reorderBlocks, deleteHistory, deleteHistoryMany, deleteTemplatesMany, sortEntries,
-  joinedText, HISTORY_LIMIT
+  joinedText, HISTORY_LIMIT, FIXED_SYMBOLS
 } from "../extension/model.mjs";
 
 const time = "2026-10-19T00:00:00.000Z";
@@ -79,10 +79,13 @@ test("template insertion and fixed-symbol appending create distinct document blo
   state = addTemplate(state, "定型句", "template-1", "template-history-1", time);
   state = insertFromTemplate(state, "template-1", 1, "template-block", "template-history-2", time);
   state = insertSymbolBlock(state, "、", state.document.blocks.length, "symbol-block");
+  assert.deepEqual(FIXED_SYMBOLS.slice(0, 5), ["、", "。", " ", "\n", "・"]);
+  state = insertSymbolBlock(state, " ", state.document.blocks.length, "space-symbol-block");
+  state = insertSymbolBlock(state, "\n", state.document.blocks.length, "newline-symbol-block");
   state = insertSymbolBlock(state, "？", state.document.blocks.length, "fullwidth-symbol-block");
   state = insertSymbolBlock(state, "\\", state.document.blocks.length, "halfwidth-symbol-block");
   assert.deepEqual(state.document.blocks.map((block) => [block.text, block.origin]), [
-    ["前", "voice"], ["定型句", "template"], ["、", "symbol"], ["？", "symbol"], ["\\", "symbol"]
+    ["前", "voice"], ["定型句", "template"], ["、", "symbol"], [" ", "symbol"], ["\n", "symbol"], ["？", "symbol"], ["\\", "symbol"]
   ]);
   assert.equal(state.templates[0].useCount, 2);
   assert.ok(state.history.some((item) => item.text === "定型句"));
