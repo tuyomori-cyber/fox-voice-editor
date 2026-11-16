@@ -1,19 +1,17 @@
 # fox-voice-editor
 
-Linux側で録音して日本語の文字起こし結果だけをFirefox拡張へ返します。認識結果をブロックとして蓄積し、タッチで組み立てます。現行仕様は[仕様書 v0.3](specification/fox-voice-editor仕様書v0.3.md)を参照してください。旧世代の仕様・連携検討記録は[old/specification/](old/specification/)に保管しています。
+共有の`foxbook-speech` serviceがLinux側で録音・認識し、Voice Editorは結果をブロックとして蓄積してタッチで組み立てます。履歴・定型の保存だけは既存`fox_voice_editor` Hostが担当します。現行仕様は[仕様書 v0.3](specification/fox-voice-editor仕様書v0.3.md)を参照してください。旧世代の仕様・連携検討記録は[old/specification/](old/specification/)に保管しています。
 
 ## 前提
 
 - FirefoxはNative Messagingに対応するLinux版を使う。
-- `arecord`と`ffmpeg`が利用できる。
-- このリポジトリと`whisper.cpp`が同じ親ディレクトリにある。
-- `whisper.cpp/build/bin/whisper-cli`と`whisper.cpp/models/ggml-base.bin`が存在する。
+- `foxbook-speech` のsystemd --user serviceと`foxbook_speech` Native Messaging Hostを導入・起動済みである。
 - B・Cの時間計測には、同じ親ディレクトリの`whisper.cpp`を`cmake --build ../whisper.cpp/build --target whisper-cli -j2`で再ビルドしたバイナリを使う。旧バイナリでも録音・認識はできるが、B・Cは「計測不可」と表示される。
 - ReazonSpeechを選ぶ端末では、このリポジトリと`reazonspeech`を同じ親ディレクトリに置き、`reazonspeech/.venv/bin/python`に`sherpa-onnx`を導入する。モデルは`reazonspeech/`直下のINT8 encoder・joiner、通常版decoder、`tokens.txt`を使う。拡張から実行ファイルやモデルのパスは指定できない。
 
 ## 起動
 
-1. `python3 scripts/install_host.py`でユーザー単位のNative Host定義を登録する。定義は現在のリポジトリ内のHostを参照するため、試作中はリポジトリを移動しない。
+1. `python3 scripts/install_host.py`で、履歴・定型保存用の`fox_voice_editor` Native Host定義を登録する。音声service用の`foxbook_speech`は`foxbook-speech`リポジトリから別途導入する。
 2. Firefoxの`about:debugging`から`extension/manifest.json`を一時読み込みする。
 3. ツールバーボタンで専用タブを開く。既存の専用タブがあれば、そのタブを前面に出す。
 
@@ -53,7 +51,7 @@ printf '{"boost_fix": true}\n' > "$HOME/.config/fox-voice-editor/microphone.json
 
 ## 通信
 
-`connectNative("fox_voice_editor")`で持続接続します。Firefoxから送る固定アクションは`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording`、`cancel_recording`、`get_status`、`load_library`、`save_library`です。`prepare_engine`の引数は`whisper`／`reazonspeech_k2`だけです。`save_library`は履歴・定型だけを固定パスへ保存します。Native Hostは接続ごとにマイク確認とエンジン準備の状態を保持し、それらが成功するまで録音開始を拒否します。録音ごとに`recordingId`を発行し、結果にはエンジン名と世代番号も付けます。ブロックIDや挿入位置はHostへ送信しません。音声データはFirefoxを経由しません。
+Voice Editorは二つの持続接続を使います。`connectNative("foxbook_speech")`へはAPI v1の`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording(recordingId)`、`cancel_recording(recordingId)`、`get_status`だけを送ります。`connectNative("fox_voice_editor")`へは`load_library`と`save_library`だけを送ります。音声serviceの切断は録音UIだけを無効化し、ライブラリ接続が生きていれば手入力・編集は維持します。ライブラリ接続の切断は既存どおり編集開始を抑止します。
 
 この試作の拡張IDは`fox-voice-editor@foxbook.example`です。正式なIDは後で決めます。
 

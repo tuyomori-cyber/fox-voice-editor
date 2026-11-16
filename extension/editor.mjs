@@ -5,13 +5,15 @@ import {
   deleteHistoryMany, deleteTemplatesMany, clearDocument, clearHistory, joinedText, sortEntries
 } from "./model.mjs";
 
-const HOST_NAME = "fox_voice_editor";
+const SPEECH_HOST_NAME = "foxbook_speech";
+const LIBRARY_HOST_NAME = "fox_voice_editor";
 const STORAGE_KEY = "editorState";
 const ENGINE_STORAGE_KEY = "recognitionEngine";
 const $ = (id) => document.getElementById(id);
 const statusNode = $("status");
 const microphoneStatusNode = $("microphone-status");
 const engineStatusNode = $("engine-status");
+const libraryStatusNode = $("library-status");
 const errorNode = $("error");
 const timerNode = $("timer");
 const internalStatusNode = $("internal-status");
@@ -39,8 +41,10 @@ let fxOskTarget = DEFAULT_FX_OSK_TARGET;
 let fxOskFrame = null;
 let fxOskFrameOrigin = null;
 let fxOskRequest = null;
-let port = null;
+let speechPort = null;
+let libraryPort = null;
 let libraryReady = false;
+let libraryStatus = "connecting";
 let hostState = "connecting";
 let microphoneReady = false;
 let selectedEngine = "whisper";
@@ -93,7 +97,7 @@ function libraryFromState(state) {
 }
 
 function saveLibraryState(state) {
-  if (libraryReady) post("save_library", false, {library: libraryFromState(state)});
+  if (libraryReady) postLibrary("save_library", false, {library: libraryFromState(state)});
 }
 
 function positionInternalStatus() {
@@ -464,9 +468,9 @@ async function showFxOsk() {
 function renderEngine() {
   const select = $("recognition-engine");
   select.value = selectedEngine;
-  select.disabled = !port || hostState !== "idle";
+  select.disabled = !speechPort || hostState !== "idle";
   $("retry-engine").hidden = engineStatus !== "error";
-  $("retry-engine").disabled = !port || hostState !== "idle";
+  $("retry-engine").disabled = !speechPort || hostState !== "idle";
   const name = selectedEngine === "whisper" ? "Whisper（ggml-base.bin）" : "ReazonSpeech K2（INT8）";
   if (engineStatus === "preparing") {
     const elapsed = engineStartedAt === null ? 0 : Math.floor((performance.now() - engineStartedAt) / 1000);
@@ -687,26 +691,47 @@ function setHostState(nextState) {
     stopping: "停止中…", converting: "音声変換中…", recognizing: "文字起こし中…",
     cancelling: "キャンセル中…", syncing: "状態を確認中…", disconnected: "接続が切れました"
   };
-  statusNode.textContent = labels[nextState] || nextState;
+  statusNode.textContent = `音声service：${labels[nextState] || nextState}`;
+  libraryStatusNode.textContent = {
+    connecting: "ライブラリ：接続・読込中",
+    ready: "ライブラリ：利用可能",
+    disconnected: "ライブラリ：切断中（編集・録音開始は利用できません）",
+    error: "ライブラリ：利用不可（編集・録音開始は利用できません）"
+  }[libraryStatus];
   const toggle = $("record-toggle");
   toggle.textContent = nextState === "recording" || nextState === "stopping" ? "録音停止" : "録音開始";
   toggle.disabled = editorState === null || !libraryReady || (nextState === "idle" && (!microphoneReady || engineStatus !== "ready")) || !["idle", "recording"].includes(nextState);
   $("cancel").disabled = !["recording", "stopping", "converting", "recognizing"].includes(nextState);
-  $("check-microphone").disabled = nextState !== "idle" || !port;
+  $("check-microphone").disabled = nextState !== "idle" || !speechPort;
   renderEngine();
   render();
 }
 
-function post(action, clearError = true, extra = {}) {
+function postSpeech(action, clearError = true, extra = {}) {
   if (clearError) showError("");
   try {
-    if (!port) throw new Error("Native Hostに接続されていません。");
-    port.postMessage({ action, ...extra });
+    if (!speechPort) throw new Error("音声serviceに接続されていません。");
+    speechPort.postMessage({version: 1, action, ...extra});
     return true;
   } catch (error) {
     showError(`Native Hostへの送信に失敗しました: ${error.message}`);
     resetRecording();
     setHostState("disconnected");
+    return false;
+  }
+}
+
+function postLibrary(action, clearError = true, extra = {}) {
+  if (clearError) showError("");
+  try {
+    if (!libraryPort) throw new Error("ライブラリHostに接続されていません。");
+    libraryPort.postMessage({action, ...extra});
+    return true;
+  } catch (error) {
+    libraryReady = false;
+    libraryStatus = "error";
+    showError(`ライブラリHostへの送信に失敗しました: ${error.message}`);
+    setHostState(hostState);
     return false;
   }
 }
@@ -728,7 +753,7 @@ function beginRecording() {
   pendingTarget = { kind: "insert", index: editorState.document.blocks.length };
   clearBlockSelection();
   setHostState("starting");
-  post("start_recording");
+  postSpeech("start_recording");
 }
 
 function resetRecording() {
@@ -752,21 +777,24 @@ function handleMessage(message) {
       const libraryState = restoreState({schemaVersion: message.library?.schemaVersion, document: {blocks: []}, history: message.library?.history, templates: message.library?.templates});
       editorState = {...editorState, history: libraryState.history, templates: libraryState.templates};
       libraryReady = true;
-      render();
+      libraryStatus = "ready";
+      setHostState(hostState);
       persist(editorState);
       if (!message.exists) saveLibraryState(editorState);
     } catch (error) {
       libraryReady = false;
+      libraryStatus = "error";
       showError(`定型・履歴データを読み取れません: ${error.message}`);
-      render();
+      setHostState(hostState);
     }
     return;
   }
   if (message.event === "library_saved") return;
   if (message.event === "library_error") {
     libraryReady = false;
+    libraryStatus = "error";
     showError(`定型・履歴を保存できません: ${message.message || message.code}`);
-    render();
+    setHostState(hostState);
     return;
   }
   if (message.event === "engine_prepared") {
@@ -784,13 +812,15 @@ function handleMessage(message) {
   }
   if (message.event === "microphone_prepared") {
     if (hostState !== "preparing") return;
-    microphoneReady = ["skipped", "unchanged", "adjusted"].includes(message.status);
+    microphoneReady = ["ready", "skipped", "unchanged", "adjusted"].includes(message.status);
     if (microphoneReady) {
       const checkedAt = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
       const description = {
-        skipped: "補正無効", unchanged: "ブースト値0・変更なし", adjusted: "ブースト値を0へ補正"
+        ready: "共有音声serviceで準備完了", skipped: "補正無効", unchanged: "ブースト値0・変更なし", adjusted: "ブースト値を0へ補正"
       }[message.status];
-      microphoneStatusNode.textContent = message.status === "skipped"
+      microphoneStatusNode.textContent = message.status === "ready"
+        ? "マイク準備完了（共有音声service）"
+        : message.status === "skipped"
         ? "マイク補正は無効（録音可能）"
         : `マイク最終確認 ${checkedAt}：${description}。録音時は自動再確認しません。`;
       showError("");
@@ -808,7 +838,7 @@ function handleMessage(message) {
       setHostState("disconnected");
     } else {
       setHostState("syncing");
-      post("get_status", false);
+      postSpeech("get_status", false);
     }
     return;
   }
@@ -846,7 +876,7 @@ function handleMessage(message) {
       activeTarget = null;
       cancelRequested = true;
       setHostState("cancelling");
-      post("cancel_recording", false);
+      postSpeech("cancel_recording", false, {recordingId});
     }
   } else if (message.event === "stopping" && message.recordingId === recordingId) {
     if (!cancelRequested) setHostState("stopping");
@@ -888,23 +918,47 @@ function handleMessage(message) {
   }
 }
 
-function connect() {
-  if (port) return;
-  microphoneReady = false;
+function connectLibrary() {
+  if (libraryPort) return;
   libraryReady = false;
+  libraryStatus = "connecting";
+  setHostState(hostState);
+  try {
+    const connectedPort = browser.runtime.connectNative(LIBRARY_HOST_NAME);
+    libraryPort = connectedPort;
+    connectedPort.onMessage.addListener(handleMessage);
+    connectedPort.onDisconnect.addListener(() => {
+      if (libraryPort !== connectedPort) return;
+      libraryPort = null;
+      libraryReady = false;
+      libraryStatus = "disconnected";
+      showError(browser.runtime.lastError?.message || "ライブラリHostとの接続が切れました。");
+      setHostState(hostState);
+    });
+    postLibrary("load_library", false);
+  } catch (error) {
+    libraryReady = false;
+    libraryStatus = "error";
+    showError(error.message);
+    setHostState(hostState);
+  }
+}
+
+function connectSpeech() {
+  if (speechPort) return;
+  microphoneReady = false;
   engineStatus = "uninitialized";
   engineGeneration = null;
   engineInitializationMs = null;
   setHostState("connecting");
   try {
-    const connectedPort = browser.runtime.connectNative(HOST_NAME);
-    port = connectedPort;
+    const connectedPort = browser.runtime.connectNative(SPEECH_HOST_NAME);
+    speechPort = connectedPort;
     connectedPort.onMessage.addListener(handleMessage);
     connectedPort.onDisconnect.addListener(() => {
-      if (port !== connectedPort) return;
-      showError(browser.runtime.lastError?.message || "Native Hostとの接続が切れました。");
-      port = null;
-      libraryReady = false;
+      if (speechPort !== connectedPort) return;
+      showError(browser.runtime.lastError?.message || "音声serviceとの接続が切れました。");
+      speechPort = null;
       microphoneReady = false;
       engineStatus = "uninitialized";
       engineGeneration = null;
@@ -914,13 +968,17 @@ function connect() {
       setHostState("disconnected");
     });
     setHostState("preparing");
-    post("load_library", false);
-    post("prepare_microphone");
-    post("prepare_engine", false, {engine: selectedEngine});
+    postSpeech("prepare_microphone");
+    postSpeech("prepare_engine", false, {engine: selectedEngine});
   } catch (error) {
     showError(error.message);
     setHostState("disconnected");
   }
+}
+
+function connect() {
+  connectLibrary();
+  connectSpeech();
 }
 
 function prepareSelectedEngine() {
@@ -929,7 +987,7 @@ function prepareSelectedEngine() {
   engineStartedAt = null;
   engineInitializationMs = null;
   renderEngine();
-  post("prepare_engine", true, {engine: selectedEngine});
+  postSpeech("prepare_engine", true, {engine: selectedEngine});
   setHostState(hostState);
 }
 
@@ -956,7 +1014,7 @@ $("record-toggle").addEventListener("click", () => {
   } else if (hostState === "recording") {
     stopAt = performance.now();
     setHostState("stopping");
-    post("stop_recording");
+    postSpeech("stop_recording", true, {recordingId});
   }
 });
 $("check-microphone").addEventListener("click", () => {
@@ -964,13 +1022,13 @@ $("check-microphone").addEventListener("click", () => {
   microphoneReady = false;
   microphoneStatusNode.textContent = "マイクを確認中…";
   setHostState("preparing");
-  post("prepare_microphone");
+  postSpeech("prepare_microphone");
 });
 $("cancel").addEventListener("click", () => {
   if (!["recording", "stopping", "converting", "recognizing"].includes(hostState)) return;
   cancelRequested = true;
   setHostState("cancelling");
-  post("cancel_recording");
+  postSpeech("cancel_recording", true, {recordingId});
 });
 $("insert-before").addEventListener("click", () => insertRelative(false));
 $("insert-after").addEventListener("click", () => insertRelative(true));
@@ -1147,7 +1205,7 @@ $("check-focodex").addEventListener("click", () => transferToFocodex(true));
 window.addEventListener("pageshow", (event) => {
   if (!event.persisted) return;
   window.setTimeout(() => {
-    if (editorState !== null && !port) connect();
+    if (editorState !== null && (!speechPort || !libraryPort)) connect();
   }, 0);
 });
 
