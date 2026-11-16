@@ -16,19 +16,20 @@ fox-voice-editorは、ローカル音声認識の結果、手入力、履歴、�
 | 要素 | 責務 |
 | --- | --- |
 | `extension/` | 編集画面、状態保存、Focodex・FX-OSK連携。試作IDは`fox-voice-editor@foxbook.example`。 |
-| `native_host/fox_voice_editor.py` | 録音、WAV変換、Whisper実行、ReazonSpeech Worker管理、ライブラリ正本の原子的保存。 |
-| `native_host/reazon_worker.py` | K2 INT8モデルを接続中に一度初期化し、連続認識で再利用する。 |
+| `native_host/fox_voice_editor.py` | 履歴・定型の読込とライブラリ正本の原子的保存。 |
+| `foxbook-speech` | 別の音声Port、共有service、録音・変換・認識、ReazonSpeech Workerを担当する。 |
 | `scripts/install_host.py` | 現在のリポジトリを指すユーザー単位Native Host定義を登録する。 |
 
-Host名は`fox_voice_editor`。許可する要求は`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording`、`cancel_recording`、`get_status`、`load_library`、`save_library`だけである。`prepare_engine`は`whisper`または`reazonspeech_k2`だけを受け付ける。
+ライブラリHost名は`fox_voice_editor`で、`load_library`と`save_library`を扱う。音声Host名は`foxbook_speech`で、`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording`、`cancel_recording`、`get_status`を扱う。`prepare_engine`は`whisper`または`reazonspeech_k2`だけを受け付ける。
 
 ## 3. 録音と認識
 
-- 録音は最大30秒。マイク準備と選択エンジン準備が完了するまで開始しない。
+- 録音は最大30秒。画面に時間の案内を表示し、上限到達時は自動停止して認識結果を追加する。マイク準備と選択エンジン準備が完了するまで開始しない。
 - Whisperは`../whisper.cpp/build/bin/whisper-cli`、`../whisper.cpp/models/ggml-base.bin`、`-l ja`を用い、録音ごとにCLIを起動する。
-- ReazonSpeechは`../reazonspeech/.venv/bin/python`とINT8 encoder・通常decoder・joiner・`tokens.txt`を固定位置から読む。Workerは同一Native Host接続内で再利用する。
+- ReazonSpeechは`../reazonspeech/.venv/bin/python`とINT8 encoder・通常decoder・joiner・`tokens.txt`を固定位置から読む。Workerは音声service全体で再利用する。
 - 成功結果は`recordingId`、エンジン、世代番号を照合して末尾ブロックと履歴へ追加する。失敗・キャンセル・空文字列は文書と履歴を変更しない。
-- Surface固有のマイク補正は`~/.config/fox-voice-editor/microphone.json`の`{"boost_fix": true}`を明示した場合だけ、固定対象`PCH` / `Internal Mic Boost`を0にする。
+- ライブラリPortの切断を検知したら、開始中・録音中・変換中・認識中の音声処理をキャンセルする。開始応答前なら録音IDを受け取ってから要求し、切断検知後に届いた結果は文書・履歴へ追加しない。切断前に確定した内容は保持する。復旧まで新しい録音と編集を抑止する。
+- 現在の共有音声serviceは端末固有のマイク補正を行わない。旧Hostの`microphone.json`は共有serviceには適用されず、補正の設定方式は未決定。
 
 ## 4. 編集と保存
 

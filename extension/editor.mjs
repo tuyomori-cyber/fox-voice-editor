@@ -60,6 +60,7 @@ let recordingId = null;
 let pendingTarget = null;
 let activeTarget = null;
 let stopAt = null;
+let stoppedByLimit = false;
 let cancelRequested = false;
 let historyVisibleCount = 30;
 const selectedHistoryIds = new Set();
@@ -761,6 +762,7 @@ function resetRecording() {
   pendingTarget = null;
   activeTarget = null;
   stopAt = null;
+  stoppedByLimit = false;
   cancelRequested = false;
   activeEngine = null;
   activeGeneration = null;
@@ -769,6 +771,17 @@ function resetRecording() {
 function finishRecording() {
   resetRecording();
   setHostState("idle");
+}
+
+function cancelForLibraryDisconnect() {
+  if (hostState === "starting") {
+    cancelRequested = true;
+    setHostState("cancelling");
+  } else if (recordingId && ["recording", "stopping", "converting", "recognizing", "syncing"].includes(hostState)) {
+    cancelRequested = true;
+    setHostState("cancelling");
+    postSpeech("cancel_recording", false, {recordingId});
+  }
 }
 
 function handleMessage(message) {
@@ -871,14 +884,19 @@ function handleMessage(message) {
     pendingTarget = null;
     stopAt = null;
     timerNode.textContent = "";
-    setHostState("recording");
-    if (activeEngine !== selectedEngine || activeGeneration !== engineGeneration) {
+    if (cancelRequested || activeEngine !== selectedEngine || activeGeneration !== engineGeneration) {
       activeTarget = null;
       cancelRequested = true;
       setHostState("cancelling");
       postSpeech("cancel_recording", false, {recordingId});
+    } else {
+      setHostState("recording");
     }
   } else if (message.event === "stopping" && message.recordingId === recordingId) {
+    if (message.reason === "recording_limit") {
+      stoppedByLimit = true;
+      if (stopAt === null) stopAt = performance.now();
+    }
     if (!cancelRequested) setHostState("stopping");
   } else if (message.event === "processing" && message.recordingId === recordingId) {
     if (!cancelRequested) setHostState(message.state);
@@ -909,7 +927,7 @@ function handleMessage(message) {
             `B whisper-cli起動〜モデル読み込み完了: ${duration(message.modelStartupMs)}`,
             `C モデル読み込み完了〜認識終了: ${duration(message.recognitionMs)}`
           ];
-      timerNode.textContent = [...lines, `停止ボタン〜結果表示: ${duration(browserDuration)}`,
+      timerNode.textContent = [...lines, `${stoppedByLimit ? "自動停止" : "停止ボタン"}〜結果表示: ${duration(browserDuration)}`,
         `使用モデル: ${message.modelName || "不明"}`].join("\n");
     }
     finishRecording();
@@ -933,6 +951,7 @@ function connectLibrary() {
       libraryReady = false;
       libraryStatus = "disconnected";
       showError(browser.runtime.lastError?.message || "ライブラリHostとの接続が切れました。");
+      cancelForLibraryDisconnect();
       setHostState(hostState);
     });
     postLibrary("load_library", false);

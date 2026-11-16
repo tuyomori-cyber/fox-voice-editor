@@ -15,18 +15,11 @@
 2. Firefoxの`about:debugging`から`extension/manifest.json`を一時読み込みする。
 3. ツールバーボタンで専用タブを開く。既存の専用タブがあれば、そのタブを前面に出す。
 
-接続時にマイクを確認し、成功するまで録音ボタンを無効にします。初期状態ではマイクブースト補正は無効なので、ミキサーの読み書きは行わず録音できます。
+接続時に音声serviceのマイク準備を行い、完了するまで録音ボタンを無効にします。現在の共有serviceはミキサーの自動補正を行いません。
 
-編集画面でWhisper baseとReazonSpeech K2 INT8を選択できます。未設定時はWhisperです。ReazonSpeechを選ぶと編集セッション中にWorkerを一度初期化し、録音ごとに再利用します。マイクとモデルの両方が準備できるまで録音できません。準備失敗時は再試行またはWhisperへの切替ができます。選択は`browser.storage.local`に保存されます。
+編集画面でWhisper baseとReazonSpeech K2 INT8を選択できます。未設定時はWhisperです。ReazonSpeech Workerは共有serviceが再利用し、利用がなくなってから5分で解放します。マイクとモデルの両方が準備できるまで録音できません。準備失敗時は再試行またはWhisperへの切替ができます。選択は`browser.storage.local`に保存されます。
 
-Surface Pro 4で補正を使う場合は、**Surface上で**次を実行して端末ローカルの設定を有効にしてください。
-
-```bash
-mkdir -p "$HOME/.config/fox-voice-editor"
-printf '{"boost_fix": true}\n' > "$HOME/.config/fox-voice-editor/microphone.json"
-```
-
-対象はコード内で `PCH` の `Internal Mic Boost` を整数値 `0` に固定しています。設定ファイルがない場合は無効で、画面には「マイク補正は無効」と表示されます。設定後は編集画面の「マイクを再確認」を押し、画面に「ブースト値を0へ補正」が出たら `amixer -c PCH sget 'Internal Mic Boost'` で左右の値が0になったことを確認してください。再確認で変化しない場合は、画面の状態表示と `cat "$HOME/.config/fox-voice-editor/microphone.json"` の結果を確認します。WirePlumber再起動後などにノイズを感じた場合も同じボタンで再確認してください。録音開始のたびには自動確認しません。
+旧Voice Editor Host用の`~/.config/fox-voice-editor/microphone.json`は、共有音声serviceには適用されません。Surfaceの端末固有マイク補正を共有serviceでどう扱うかは未決定です。
 
 文書ブロックは`browser.storage.local`へ保存します。履歴と定型はNative Hostが`~/.local/share/fox-voice-editor/library-v1.json`へ保存する正本で、Firefoxの`browser.storage.local`には画面用キャッシュも置きます。Temporary Add-onを削除・再読み込みしても、同じLinuxユーザーとNative Hostを使う限り履歴・定型は復元されます。初回は既存キャッシュを正本へ移行します。
 
@@ -51,7 +44,7 @@ printf '{"boost_fix": true}\n' > "$HOME/.config/fox-voice-editor/microphone.json
 
 ## 通信
 
-Voice Editorは二つの持続接続を使います。`connectNative("foxbook_speech")`へはAPI v1の`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording(recordingId)`、`cancel_recording(recordingId)`、`get_status`だけを送ります。`connectNative("fox_voice_editor")`へは`load_library`と`save_library`だけを送ります。音声serviceの切断は録音UIだけを無効化し、ライブラリ接続が生きていれば手入力・編集は維持します。ライブラリ接続の切断は既存どおり編集開始を抑止します。
+Voice Editorは二つの持続接続を使います。`connectNative("foxbook_speech")`へはAPI v1の`prepare_microphone`、`prepare_engine`、`start_recording`、`stop_recording(recordingId)`、`cancel_recording(recordingId)`、`get_status`だけを送ります。`connectNative("fox_voice_editor")`へは`load_library`と`save_library`だけを送ります。音声serviceの切断は録音UIだけを無効化し、ライブラリ接続が生きていれば手入力・編集は維持します。ライブラリ接続が切れた場合は進行中の録音・認識をキャンセルし、新しい編集と録音を抑止します。
 
 この試作の拡張IDは`fox-voice-editor@foxbook.example`です。正式なIDは後で決めます。
 
@@ -59,6 +52,7 @@ Voice Editorは二つの持続接続を使います。`connectNative("foxbook_sp
 
 ```bash
 node tests/test_model.mjs
+node tests/test_library_disconnect.mjs
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 python3 tests/check_reazon_worker.py
 ```
